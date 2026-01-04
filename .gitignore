@@ -1,0 +1,5 @@
+# RUST
+debug
+target
+**/*.rs.bk
+*.pdb
