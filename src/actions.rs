@@ -1,5 +1,5 @@
-use bevy::prelude::*;
 use crate::units::*;
+use bevy::prelude::*;
 
 // ============================================================================
 // CLICK ACTION SYSTEM
@@ -143,9 +143,12 @@ fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side) {
             current: 100,
             max: 100,
         },
-        Fitness { speed: 10 },
+        Mobility { speed: 10 },
         Inventory { items: vec![] },
     ));
 
-    info!("Soldier spawned! Rank: {:?}, Role: {:?}, Side: {:?}", rank, role, side);
+    info!(
+        "Soldier spawned! Rank: {:?}, Role: {:?}, Side: {:?}",
+        rank, role, side
+    );
 }
