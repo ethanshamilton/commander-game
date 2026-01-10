@@ -1,5 +1,6 @@
 #![allow(dead_code)] // allow temporarily while sketching
-use crate::scenes::mission::MenuId;
+use crate::scenes::mission;
+use crate::scenes::mission::{MenuId, MenuState};
 use crate::units::*;
 use bevy::prelude::*;
 
@@ -86,7 +87,7 @@ pub fn spawn_button(parent: &mut ChildSpawnerCommands, config: ButtonConfig) {
 
 pub fn interaction_system(
     mut commands: Commands,
-    mut menu_state: ResMut<crate::scenes::mission::MenuState>,
+    mut menu_state: ResMut<MenuState>,
     mut query: Query<(&Interaction, &ClickAction, &mut BackgroundColor), Changed<Interaction>>,
 ) {
     for (interaction, action, mut color) in &mut query {
@@ -106,14 +107,10 @@ pub fn interaction_system(
     }
 }
 
-fn handle_action(
-    commands: &mut Commands,
-    action: &ClickAction,
-    menu_state: &mut crate::scenes::mission::MenuState,
-) {
+fn handle_action(commands: &mut Commands, action: &ClickAction, menu_state: &mut MenuState) {
     match action {
         ClickAction::SpawnSoldier { rank, role, side } => {
-            crate::scenes::mission::spawn_soldier(commands, *rank, *role, *side);
+            mission::spawn_soldier(commands, *rank, *role, *side);
         }
         ClickAction::SelectUnit => {
             // Future: unit selection logic
@@ -123,9 +120,15 @@ fn handle_action(
             // Future: building selection logic
             info!("Select building clicked (not implemented yet)");
         }
-        ClickAction::ToggleMenu(menu_id) => menu_state.toggle(*menu_id),
-        ClickAction::OpenMenu(menu_id) => menu_state.open(*menu_id),
-        ClickAction::CloseMenu(menu_id) => menu_state.close(*menu_id),
+        ClickAction::ToggleMenu(menu_id) => {
+            menu_state.toggle(*menu_id);
+        }
+        ClickAction::OpenMenu(menu_id) => {
+            menu_state.open(*menu_id);
+        }
+        ClickAction::CloseMenu(menu_id) => {
+            menu_state.close(*menu_id);
+        }
         ClickAction::Custom(msg) => {
             info!("Custom action: {}", msg);
         }

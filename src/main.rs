@@ -11,11 +11,10 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .init_state::<GameState>()
         .insert_resource(MenuState::new())
-        .add_systems(Startup, setup)
         // Mission Screen Lifecycle
         .add_systems(
             OnEnter(GameState::MissionScreen),
-            (setup, setup_sidebar, setup_unit_bar),
+            (setup, setup_mission_ui),
         )
         .add_systems(OnExit(GameState::MissionScreen), cleanup_mission_scene)
         // Mission Screen Systems
@@ -34,8 +33,8 @@ fn setup(mut commands: Commands) {
 /// Game States
 #[derive(States, Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
-    #[default]
     MainMenu,
+    #[default]
     MissionScreen,
     Settings,
 }

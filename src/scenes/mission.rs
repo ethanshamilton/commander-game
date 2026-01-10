@@ -86,106 +86,128 @@ pub fn update_menu_visibility(
     }
 }
 
-/// Left sidebar providing buttons for all other menus
-pub fn setup_sidebar(mut commands: Commands) {
+/// Setup the entire mission UI hierarchy using flexbox
+pub fn setup_mission_ui(mut commands: Commands) {
+    // Root flex container (fills screen, horizontal layout)
     commands
         .spawn((
             MissionScreenRoot,
-            Menu { id: MenuId::Meta },
             Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
-                top: Val::Px(0.0),
-                width: Val::Px(200.0),
-                height: Val::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(10.0)),
-                row_gap: Val::Px(10.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
-        ))
-        .with_children(|parent| {
-            spawn_button(
-                parent,
-                ButtonConfig {
-                    label: "U".to_string(),
-                    action: ClickAction::ToggleMenu(MenuId::Unit),
-                    width: 180.0,
-                    height: 50.0,
-                    ..default()
-                },
-            );
-
-            spawn_button(
-                parent,
-                ButtonConfig {
-                    label: "S".to_string(),
-                    action: ClickAction::ToggleMenu(MenuId::Settings),
-                    width: 180.0,
-                    height: 50.0,
-                    ..default()
-                },
-            );
-        });
-}
-
-/// Bottom bar with unit spawning buttons
-pub fn setup_unit_bar(mut commands: Commands) {
-    commands
-        .spawn((
-            MissionScreenRoot,
-            Menu { id: MenuId::Unit },
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(0.0),
                 width: Val::Percent(100.0),
-                height: Val::Px(100.0),
-                justify_content: JustifyContent::FlexStart,
-                align_items: AlignItems::FlexEnd,
-                column_gap: Val::Px(10.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
                 ..default()
             },
         ))
         .with_children(|parent| {
-            spawn_button(
-                parent,
-                ButtonConfig {
-                    label: "Spawn Private".to_string(),
-                    action: ClickAction::SpawnSoldier {
-                        rank: Rank::Private,
-                        role: Role::Rifleman,
-                        side: Side::Blue,
+            // Left sidebar (fixed width, always visible)
+            parent
+                .spawn((
+                    Menu { id: MenuId::Meta },
+                    Node {
+                        width: Val::Px(200.0),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(10.0)),
+                        row_gap: Val::Px(10.0),
+                        ..default()
                     },
-                    ..default()
-                },
-            );
+                    BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
+                ))
+                .with_children(|sidebar| {
+                    spawn_button(
+                        sidebar,
+                        ButtonConfig {
+                            label: "U".to_string(),
+                            action: ClickAction::ToggleMenu(MenuId::Unit),
+                            width: 180.0,
+                            height: 50.0,
+                            ..default()
+                        },
+                    );
 
-            spawn_button(
-                parent,
-                ButtonConfig {
-                    label: "Spawn Sergeant".to_string(),
-                    action: ClickAction::SpawnSoldier {
-                        rank: Rank::Sergeant,
-                        role: Role::Rifleman,
-                        side: Side::Blue,
-                    },
-                    ..default()
-                },
-            );
+                    spawn_button(
+                        sidebar,
+                        ButtonConfig {
+                            label: "S".to_string(),
+                            action: ClickAction::ToggleMenu(MenuId::Settings),
+                            width: 180.0,
+                            height: 50.0,
+                            ..default()
+                        },
+                    );
+                });
 
-            spawn_button(
-                parent,
-                ButtonConfig {
-                    label: "Spawn Medic".to_string(),
-                    action: ClickAction::SpawnSoldier {
-                        rank: Rank::Private,
-                        role: Role::Medic,
-                        side: Side::Blue,
-                    },
+            // Main content area (flex to fill remaining space, vertical layout)
+            parent
+                .spawn(Node {
+                    flex_grow: 1.0,
+                    flex_direction: FlexDirection::Column,
                     ..default()
-                },
-            );
+                })
+                .with_children(|main_area| {
+                    // Content area (grows to push unit bar to bottom)
+                    main_area.spawn(Node {
+                        flex_grow: 1.0,
+                        ..default()
+                    });
+
+                    // Unit bar at bottom (fixed height, toggleable)
+                    main_area
+                        .spawn((
+                            Menu { id: MenuId::Unit },
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(100.0),
+                                justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(10.0),
+                                padding: UiRect::all(Val::Px(10.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                        ))
+                        .with_children(|unit_bar| {
+                            spawn_button(
+                                unit_bar,
+                                ButtonConfig {
+                                    label: "Spawn Private".to_string(),
+                                    action: ClickAction::SpawnSoldier {
+                                        rank: Rank::Private,
+                                        role: Role::Rifleman,
+                                        side: Side::Blue,
+                                    },
+                                    ..default()
+                                },
+                            );
+
+                            spawn_button(
+                                unit_bar,
+                                ButtonConfig {
+                                    label: "Spawn Sergeant".to_string(),
+                                    action: ClickAction::SpawnSoldier {
+                                        rank: Rank::Sergeant,
+                                        role: Role::Rifleman,
+                                        side: Side::Blue,
+                                    },
+                                    ..default()
+                                },
+                            );
+
+                            spawn_button(
+                                unit_bar,
+                                ButtonConfig {
+                                    label: "Spawn Medic".to_string(),
+                                    action: ClickAction::SpawnSoldier {
+                                        rank: Rank::Private,
+                                        role: Role::Medic,
+                                        side: Side::Blue,
+                                    },
+                                    ..default()
+                                },
+                            );
+                        });
+                });
         });
 }
 
@@ -214,3 +236,4 @@ pub fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side
         rank, role, side
     );
 }
+
