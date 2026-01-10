@@ -1,3 +1,5 @@
+#![allow(dead_code)] // allow temporarily while sketching
+use crate::scenes::mission::MenuId;
 use crate::units::*;
 use bevy::prelude::*;
 
@@ -15,17 +17,12 @@ pub enum ClickAction {
     SelectBuilding,
 
     // UI actions
-    OpenMenu(MenuType),
-    CloseMenu,
+    ToggleMenu(MenuId),
+    OpenMenu(MenuId),
+    CloseMenu(MenuId),
 
     // Future-proof
     Custom(String), // For prototyping
-}
-
-#[derive(Clone, Debug)]
-pub enum MenuType {
-    Main,
-    Settings,
 }
 
 // ============================================================================
@@ -89,12 +86,13 @@ pub fn spawn_button(parent: &mut ChildSpawnerCommands, config: ButtonConfig) {
 
 pub fn interaction_system(
     mut commands: Commands,
+    mut menu_state: ResMut<crate::scenes::mission::MenuState>,
     mut query: Query<(&Interaction, &ClickAction, &mut BackgroundColor), Changed<Interaction>>,
 ) {
     for (interaction, action, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
-                handle_action(&mut commands, action);
+                handle_action(&mut commands, action, &mut menu_state);
                 // Visual feedback
                 *color = BackgroundColor(Color::srgb(0.35, 0.75, 0.35));
             }
@@ -108,10 +106,14 @@ pub fn interaction_system(
     }
 }
 
-fn handle_action(commands: &mut Commands, action: &ClickAction) {
+fn handle_action(
+    commands: &mut Commands,
+    action: &ClickAction,
+    menu_state: &mut crate::scenes::mission::MenuState,
+) {
     match action {
         ClickAction::SpawnSoldier { rank, role, side } => {
-            spawn_soldier(commands, *rank, *role, *side);
+            crate::scenes::mission::spawn_soldier(commands, *rank, *role, *side);
         }
         ClickAction::SelectUnit => {
             // Future: unit selection logic
@@ -121,34 +123,12 @@ fn handle_action(commands: &mut Commands, action: &ClickAction) {
             // Future: building selection logic
             info!("Select building clicked (not implemented yet)");
         }
-        ClickAction::OpenMenu(menu_type) => {
-            // Future: menu logic
-            info!("Open menu clicked: {:?}", menu_type);
-        }
-        ClickAction::CloseMenu => {
-            // Future: menu logic
-            info!("Close menu clicked (not implemented yet)");
-        }
+        ClickAction::ToggleMenu(menu_id) => menu_state.toggle(*menu_id),
+        ClickAction::OpenMenu(menu_id) => menu_state.open(*menu_id),
+        ClickAction::CloseMenu(menu_id) => menu_state.close(*menu_id),
         ClickAction::Custom(msg) => {
             info!("Custom action: {}", msg);
         }
     }
 }
 
-fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side) {
-    commands.spawn((
-        Soldier { rank, role },
-        Allegiance { side },
-        Health {
-            current: 100,
-            max: 100,
-        },
-        Mobility { speed: 10 },
-        Inventory { items: vec![] },
-    ));
-
-    info!(
-        "Soldier spawned! Rank: {:?}, Role: {:?}, Side: {:?}",
-        rank, role, side
-    );
-}
