@@ -1,9 +1,20 @@
 #![allow(dead_code)] // allow temporarily while sketching
 use bevy::prelude::*;
 
+// BUNDLES
+
+#[derive(Bundle, Default)]
+pub struct SoldierBundle {
+    pub soldier: Soldier,
+    pub allegiance: Allegiance,
+    pub health: Health,
+    pub mobility: Mobility,
+    pub inventory: Inventory,
+}
+
 // COMPONENTS
 
-#[derive(Component)]
+#[derive(Default, Component)]
 pub struct Allegiance {
     pub side: Side,
 }
@@ -21,7 +32,7 @@ pub struct Health {
     pub max: i32,
 }
 
-// Movement stats for entity
+/// Movement stats for entity
 #[derive(Component)]
 pub struct Mobility {
     pub speed: i32,
@@ -32,7 +43,7 @@ pub struct Inventory {
     pub items: Vec<Item>,
 }
 
-// Where an entity exists on the map
+/// Where an entity exists on the map
 #[derive(Component)]
 pub struct Position {
     pub x: i32,
