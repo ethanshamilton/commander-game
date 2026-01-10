@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 // BUNDLES
 
-#[derive(Bundle, Default)]
+#[derive(Bundle)]
 pub struct SoldierBundle {
     pub soldier: Soldier,
     pub allegiance: Allegiance,
@@ -14,7 +14,7 @@ pub struct SoldierBundle {
 
 // COMPONENTS
 
-#[derive(Default, Component)]
+#[derive(Component)]
 pub struct Allegiance {
     pub side: Side,
 }
