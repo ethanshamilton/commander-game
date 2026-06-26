@@ -35,18 +35,16 @@ impl MenuState {
         *self.states.get(&id).unwrap_or(&false)
     }
 
-    pub fn toggle(&mut self, id: MenuId) {
-        if let Some(state) = self.states.get_mut(&id) {
-            *state = !*state;
-        }
+    pub fn set(&mut self, id: MenuId, is_open: bool) {
+        self.states.insert(id, is_open);
     }
 
     pub fn open(&mut self, id: MenuId) {
-        self.states.insert(id, true);
+        self.set(id, true);
     }
 
     pub fn close(&mut self, id: MenuId) {
-        self.states.insert(id, false);
+        self.set(id, false);
     }
 }
 
@@ -62,6 +60,24 @@ pub enum MenuId {
     Meta,
     Unit,
     Settings,
+}
+
+// ============================================================================
+// PLUGIN
+// ============================================================================
+
+pub struct MissionScenePlugin;
+
+impl Plugin for MissionScenePlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(MenuState::new())
+            .add_systems(OnEnter(crate::GameState::MissionScreen), setup_mission_ui)
+            .add_systems(OnExit(crate::GameState::MissionScreen), cleanup_mission_scene)
+            .add_systems(
+                Update,
+                update_menu_visibility.run_if(in_state(crate::GameState::MissionScreen)),
+            );
+    }
 }
 
 // ============================================================================
@@ -115,25 +131,25 @@ pub fn setup_mission_ui(mut commands: Commands) {
                     BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
                 ))
                 .with_children(|sidebar| {
-                    spawn_button(
+                    spawn_menu_toggle(
                         sidebar,
-                        ButtonConfig {
+                        MenuToggleConfig {
                             label: "U".to_string(),
-                            action: ClickAction::ToggleMenu(MenuId::Unit),
+                            menu_id: MenuId::Unit,
+                            checked: false,
                             width: 180.0,
                             height: 50.0,
-                            ..default()
                         },
                     );
 
-                    spawn_button(
+                    spawn_menu_toggle(
                         sidebar,
-                        ButtonConfig {
+                        MenuToggleConfig {
                             label: "S".to_string(),
-                            action: ClickAction::ToggleMenu(MenuId::Settings),
+                            menu_id: MenuId::Settings,
+                            checked: false,
                             width: 180.0,
                             height: 50.0,
-                            ..default()
                         },
                     );
                 });

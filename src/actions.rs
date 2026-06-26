@@ -1,13 +1,22 @@
 #![allow(dead_code)] // allow temporarily while sketching
+
 use crate::scenes::mission;
 use crate::scenes::mission::{MenuId, MenuState};
 use crate::units::*;
 use bevy::prelude::*;
+use bevy::ui::Checked;
+use bevy::ui_widgets::{
+    Activate, Button, Checkbox, ValueChange, checkbox_self_update, observe,
+};
 
 // ============================================================================
-// CLICK ACTION SYSTEM
+// UI ACTIONS
 // ============================================================================
 
+/// Domain-level intent attached to an activated UI control.
+///
+/// Bevy's widget components decide *when* a control is activated; this enum decides
+/// *what the game should do* after that activation.
 #[derive(Component, Clone)]
 pub enum ClickAction {
     // Unit spawning
@@ -18,12 +27,11 @@ pub enum ClickAction {
     SelectBuilding,
 
     // UI actions
-    ToggleMenu(MenuId),
     OpenMenu(MenuId),
     CloseMenu(MenuId),
 
     // Future-proof
-    Custom(String), // For prototyping
+    Custom(String),
 }
 
 // ============================================================================
@@ -68,12 +76,13 @@ pub fn spawn_button(parent: &mut ChildSpawnerCommands, config: ButtonConfig) {
             BorderColor::all(Color::BLACK),
             BackgroundColor(config.bg_color.unwrap_or(Color::srgb(0.15, 0.15, 0.15))),
             config.action,
+            observe(handle_button_activate),
         ))
         .with_children(|parent| {
             parent.spawn((
                 Text::new(config.label),
                 TextFont {
-                    font_size: config.text_size.unwrap_or(20.0),
+                    font_size: FontSize::Px(config.text_size.unwrap_or(20.0)),
                     ..default()
                 },
                 TextColor(Color::srgb(0.9, 0.9, 0.9)),
@@ -81,29 +90,89 @@ pub fn spawn_button(parent: &mut ChildSpawnerCommands, config: ButtonConfig) {
         });
 }
 
+pub struct MenuToggleConfig {
+    pub label: String,
+    pub menu_id: MenuId,
+    pub checked: bool,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Default for MenuToggleConfig {
+    fn default() -> Self {
+        Self {
+            label: "Toggle".to_string(),
+            menu_id: MenuId::Unit,
+            checked: false,
+            width: 180.0,
+            height: 50.0,
+        }
+    }
+}
+
+pub fn spawn_menu_toggle(parent: &mut ChildSpawnerCommands, config: MenuToggleConfig) {
+    let checked = config.checked;
+
+    let mut entity = parent.spawn((
+        Checkbox,
+        MenuToggle { id: config.menu_id },
+        Node {
+            width: Val::Px(config.width),
+            height: Val::Px(config.height),
+            border: UiRect::all(Val::Px(5.0)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BorderColor::all(Color::BLACK),
+        BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+        observe(checkbox_self_update),
+        observe(handle_menu_toggle_change),
+    ));
+
+    if checked {
+        entity.insert(Checked);
+    }
+
+    entity.with_children(|parent| {
+        parent.spawn((
+            Text::new(config.label),
+            TextFont {
+                font_size: FontSize::Px(20.0),
+                ..default()
+            },
+            TextColor(Color::srgb(0.9, 0.9, 0.9)),
+        ));
+    });
+}
+
+#[derive(Component)]
+pub struct MenuToggle {
+    pub id: MenuId,
+}
+
 // ============================================================================
-// INTERACTION SYSTEM
+// ACTION OBSERVERS
 // ============================================================================
 
-pub fn interaction_system(
+fn handle_button_activate(
+    activate: On<Activate>,
     mut commands: Commands,
     mut menu_state: ResMut<MenuState>,
-    mut query: Query<(&Interaction, &ClickAction, &mut BackgroundColor), Changed<Interaction>>,
+    actions: Query<&ClickAction>,
 ) {
-    for (interaction, action, mut color) in &mut query {
-        match *interaction {
-            Interaction::Pressed => {
-                handle_action(&mut commands, action, &mut menu_state);
-                // Visual feedback
-                *color = BackgroundColor(Color::srgb(0.35, 0.75, 0.35));
-            }
-            Interaction::Hovered => {
-                *color = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
-            }
-            Interaction::None => {
-                *color = BackgroundColor(Color::srgb(0.15, 0.15, 0.15));
-            }
-        }
+    if let Ok(action) = actions.get(activate.entity) {
+        handle_action(&mut commands, action, &mut menu_state);
+    }
+}
+
+fn handle_menu_toggle_change(
+    value_change: On<ValueChange<bool>>,
+    mut menu_state: ResMut<MenuState>,
+    toggles: Query<&MenuToggle>,
+) {
+    if let Ok(toggle) = toggles.get(value_change.source) {
+        menu_state.set(toggle.id, value_change.value);
     }
 }
 
@@ -113,15 +182,10 @@ fn handle_action(commands: &mut Commands, action: &ClickAction, menu_state: &mut
             mission::spawn_soldier(commands, *rank, *role, *side);
         }
         ClickAction::SelectUnit => {
-            // Future: unit selection logic
             info!("Select unit clicked (not implemented yet)");
         }
         ClickAction::SelectBuilding => {
-            // Future: building selection logic
             info!("Select building clicked (not implemented yet)");
-        }
-        ClickAction::ToggleMenu(menu_id) => {
-            menu_state.toggle(*menu_id);
         }
         ClickAction::OpenMenu(menu_id) => {
             menu_state.open(*menu_id);
@@ -134,4 +198,3 @@ fn handle_action(commands: &mut Commands, action: &ClickAction, menu_state: &mut
         }
     }
 }
-
