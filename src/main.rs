@@ -1,14 +1,14 @@
 mod actions;
-mod scenes;
+mod screens;
 mod units;
 
 use bevy::prelude::*;
-use scenes::ScenesPlugins;
+use screens::ScreensPlugins;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(ScenesPlugins)
+        .add_plugins(ScreensPlugins)
         .init_state::<GameState>()
         .run();
 }

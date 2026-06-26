@@ -1,7 +1,7 @@
 #![allow(dead_code)] // allow temporarily while sketching
 
-use crate::scenes::mission;
-use crate::scenes::mission::{MenuId, MenuState};
+use crate::screens::mission;
+use crate::screens::mission::{MenuId, MenuState};
 use crate::units::*;
 use bevy::prelude::*;
 use bevy::ui::Checked;

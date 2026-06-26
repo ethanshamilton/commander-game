@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
-pub struct SettingsScenePlugin;
+pub struct SettingsScreenPlugin;
 
-impl Plugin for SettingsScenePlugin {
+impl Plugin for SettingsScreenPlugin {
     fn build(&self, _app: &mut App) {
         // Stub. Add OnEnter/OnExit systems here when the settings scene exists.
     }

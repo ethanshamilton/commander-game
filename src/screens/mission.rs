@@ -66,9 +66,9 @@ pub enum MenuId {
 // PLUGIN
 // ============================================================================
 
-pub struct MissionScenePlugin;
+pub struct MissionScreenPlugin;
 
-impl Plugin for MissionScenePlugin {
+impl Plugin for MissionScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
             .add_systems(OnEnter(crate::GameState::MissionScreen), setup_mission_ui)
