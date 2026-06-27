@@ -1,4 +1,5 @@
 pub mod components;
+pub mod measurements;
 pub mod rendering;
 pub mod simulation;
 

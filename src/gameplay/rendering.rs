@@ -1,7 +1,8 @@
 use crate::gameplay::components::{BattlefieldPosition, Heading};
+use crate::gameplay::measurements::meters;
 use crate::units::{Allegiance, Side, Soldier};
 use crate::GameState;
-use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
 pub struct GameplayRenderingPlugin;
@@ -10,23 +11,18 @@ impl Plugin for GameplayRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattlefieldMap>().add_systems(
             Update,
-            (zoom_battlefield_camera, draw_battlefield_grid, draw_units)
+            (
+                pan_battlefield_camera,
+                zoom_battlefield_camera,
+                draw_battlefield_grid,
+                draw_units,
+            )
                 .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
 
-pub const BEVY_UNITS_PER_METER: f32 = 10.0;
 pub const GRID_SPACING_METERS: f32 = 10.0;
-
-pub const fn meters(value: f32) -> f32 {
-    value * BEVY_UNITS_PER_METER
-}
-
-#[allow(dead_code)]
-pub const fn to_meters(bevy_units: f32) -> f32 {
-    bevy_units / BEVY_UNITS_PER_METER
-}
 
 #[derive(Resource, Debug, Clone)]
 pub struct BattlefieldMap {
@@ -46,6 +42,26 @@ impl Default for BattlefieldMap {
 const MIN_CAMERA_SCALE: f32 = 0.25;
 const MAX_CAMERA_SCALE: f32 = 4.0;
 const ZOOM_SENSITIVITY: f32 = 0.2;
+
+fn pan_battlefield_camera(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mut cameras: Query<(&mut Transform, &Projection), With<Camera2d>>,
+) {
+    if !mouse_buttons.pressed(MouseButton::Middle) || mouse_motion.delta == Vec2::ZERO {
+        return;
+    }
+
+    for (mut transform, projection) in &mut cameras {
+        let Projection::Orthographic(orthographic) = projection else {
+            continue;
+        };
+
+        let pan_delta = mouse_motion.delta * orthographic.scale;
+        transform.translation.x -= pan_delta.x;
+        transform.translation.y += pan_delta.y;
+    }
+}
 
 fn zoom_battlefield_camera(
     scroll: Res<AccumulatedMouseScroll>,

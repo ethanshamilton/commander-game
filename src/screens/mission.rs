@@ -1,5 +1,7 @@
 use crate::actions::*;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
+use crate::gameplay::measurements::meters;
+use crate::missions::{MissionDefinition, DEMO_MISSION};
 use crate::units::*;
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
@@ -11,6 +13,9 @@ use std::collections::HashMap;
 
 #[derive(Component)]
 pub struct MissionScreenRoot;
+
+#[derive(Component)]
+pub struct MissionEntity;
 
 // ============================================================================
 // MENU SYSTEM
@@ -72,7 +77,10 @@ pub struct MissionScreenPlugin;
 impl Plugin for MissionScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
-            .add_systems(OnEnter(crate::GameState::MissionScreen), setup_mission_ui)
+            .add_systems(
+                OnEnter(crate::GameState::MissionScreen),
+                (setup_mission_ui, setup_demo_mission),
+            )
             .add_systems(OnExit(crate::GameState::MissionScreen), cleanup_mission_scene)
             .add_systems(
                 Update,
@@ -229,15 +237,54 @@ pub fn setup_mission_ui(mut commands: Commands) {
 }
 
 /// Cleanup mission scene on exit
-pub fn cleanup_mission_scene(mut commands: Commands, query: Query<Entity, With<MissionScreenRoot>>) {
-    for entity in &query {
+pub fn cleanup_mission_scene(
+    mut commands: Commands,
+    ui_roots: Query<Entity, With<MissionScreenRoot>>,
+    mission_entities: Query<Entity, With<MissionEntity>>,
+) {
+    for entity in &ui_roots {
         commands.entity(entity).despawn();
+    }
+
+    for entity in &mission_entities {
+        commands.entity(entity).despawn();
+    }
+}
+
+pub fn setup_demo_mission(mut commands: Commands) {
+    spawn_mission(&mut commands, &DEMO_MISSION);
+}
+
+pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
+    info!("Spawning mission: {}", mission.name);
+
+    for unit in mission.units {
+        spawn_soldier_at(
+            commands,
+            unit.rank,
+            unit.role,
+            unit.side,
+            Vec2::new(meters(unit.position_meters[0]), meters(unit.position_meters[1])),
+            unit.heading_radians,
+        );
     }
 }
 
 /// Spawn a soldier entity (gameplay logic)
 pub fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side) {
+    spawn_soldier_at(commands, rank, role, side, Vec2::ZERO, 0.0);
+}
+
+pub fn spawn_soldier_at(
+    commands: &mut Commands,
+    rank: Rank,
+    role: Role,
+    side: Side,
+    position: Vec2,
+    heading_radians: f32,
+) {
     commands.spawn((
+        MissionEntity,
         Soldier { rank, role },
         Allegiance { side },
         Health {
@@ -246,8 +293,8 @@ pub fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side
         },
         Mobility { speed: 10 },
         Inventory { items: vec![] },
-        BattlefieldPosition(Vec2::ZERO),
-        Heading(0.0),
+        BattlefieldPosition(position),
+        Heading(heading_radians),
     ));
 
     info!(
