@@ -1,13 +1,16 @@
 mod actions;
+mod gameplay;
 mod screens;
 mod units;
 
 use bevy::prelude::*;
+use gameplay::GameplayPlugins;
 use screens::ScreensPlugins;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(GameplayPlugins)
         .add_plugins(ScreensPlugins)
         .init_state::<GameState>()
         .run();

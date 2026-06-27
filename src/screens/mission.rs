@@ -1,4 +1,5 @@
 use crate::actions::*;
+use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::units::*;
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
@@ -245,6 +246,8 @@ pub fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side
         },
         Mobility { speed: 10 },
         Inventory { items: vec![] },
+        BattlefieldPosition(Vec2::ZERO),
+        Heading(0.0),
     ));
 
     info!(
