@@ -1,6 +1,7 @@
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::units::{Allegiance, Side, Soldier};
 use crate::GameState;
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
 pub struct GameplayRenderingPlugin;
@@ -9,7 +10,8 @@ impl Plugin for GameplayRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattlefieldMap>().add_systems(
             Update,
-            (draw_battlefield_grid, draw_units).run_if(in_state(GameState::MissionScreen)),
+            (zoom_battlefield_camera, draw_battlefield_grid, draw_units)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -25,6 +27,34 @@ impl Default for BattlefieldMap {
         Self {
             cells: UVec2::new(32, 24),
             cell_size: 32.0,
+        }
+    }
+}
+
+const MIN_CAMERA_SCALE: f32 = 0.25;
+const MAX_CAMERA_SCALE: f32 = 4.0;
+const ZOOM_SENSITIVITY: f32 = 0.2;
+
+fn zoom_battlefield_camera(
+    scroll: Res<AccumulatedMouseScroll>,
+    mut cameras: Query<&mut Projection, With<Camera2d>>,
+) {
+    if scroll.delta.y == 0.0 {
+        return;
+    }
+
+    let scroll_lines = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / MouseScrollUnit::SCROLL_UNIT_CONVERSION_FACTOR,
+    };
+
+    // Orthographic scale is inverse zoom: smaller scale means closer in.
+    let zoom_factor = (-scroll_lines * ZOOM_SENSITIVITY).exp();
+
+    for mut projection in &mut cameras {
+        if let Projection::Orthographic(orthographic) = projection.as_mut() {
+            orthographic.scale = (orthographic.scale * zoom_factor)
+                .clamp(MIN_CAMERA_SCALE, MAX_CAMERA_SCALE);
         }
     }
 }

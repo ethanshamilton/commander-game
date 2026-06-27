@@ -31,7 +31,7 @@ impl Plugin for ScreenInfrastructurePlugin {
 
 fn setup_screen_camera(mut commands: Commands) {
     commands.spawn(Camera2d);
-    commands.insert_resource(ClearColor(Color::srgb(0.1, 0.12, 0.14)));
+    commands.insert_resource(ClearColor(Color::BLACK));
 }
 
 // Re-export screen plugin group for main.rs.
