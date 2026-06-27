@@ -1,11 +1,14 @@
 use crate::GameState;
-use crate::ai::perception::{EyeHeight, VisualSensor, has_line_of_sight};
+use crate::ai::perception::{EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::meters;
+use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
 use crate::maps::MapDefinition;
+use crate::player::control::PlayerControl;
 use crate::player::selection::SelectedUnit;
 use crate::units::{Allegiance, Side, Soldier};
+use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
@@ -13,19 +16,29 @@ pub struct GameplayRenderingPlugin;
 
 impl Plugin for GameplayRenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<BattlefieldMap>().add_systems(
-            Update,
-            (
-                pan_battlefield_camera,
-                zoom_battlefield_camera,
-                draw_battlefield_grid,
-                draw_topography,
-                draw_selected_unit_sensor_cone,
-                draw_units,
-            )
-                .run_if(in_state(GameState::MissionScreen)),
-        );
+        app.init_resource::<BattlefieldMap>()
+            .add_systems(Startup, configure_gizmos)
+            .add_systems(
+                Update,
+                (
+                    pan_battlefield_camera,
+                    zoom_battlefield_camera,
+                    draw_battlefield_grid,
+                    draw_topography,
+                    draw_selected_unit_sensor_cone,
+                    draw_selected_unit_order,
+                    draw_selected_unit_contacts,
+                    draw_enemy_contact_boxes,
+                    draw_units,
+                )
+                    .run_if(in_state(GameState::MissionScreen)),
+            );
     }
+}
+
+fn configure_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    let (config, _) = config_store.config_mut::<DefaultGizmoConfigGroup>();
+    config.line.width = 1.0;
 }
 
 pub const GRID_SPACING_METERS: f32 = 10.0;
@@ -251,13 +264,14 @@ fn draw_selected_unit_sensor_cone(
     };
 
     let origin_m = position.0;
-    let origin = origin_m.map(meters);
     let half_fov = sensor.fov_radians / 2.0;
-    let color = Color::srgba(1.0, 1.0, 1.0, 0.28);
+    let color = Color::srgba(0.45, 0.85, 1.0, 0.35);
 
     let left_angle = *heading - half_fov;
     let right_angle = *heading + half_fov;
+    let origin = origin_m.map(meters);
     let mut previous = None;
+    let mut left_endpoint = None;
 
     for segment in 0..=SENSOR_CONE_SEGMENTS {
         let t = segment as f32 / SENSOR_CONE_SEGMENTS as f32;
@@ -265,12 +279,22 @@ fn draw_selected_unit_sensor_cone(
         let endpoint =
             visible_sensor_endpoint(&map, origin_m, angle, sensor.range_m, eye_height.height_m);
 
-        gizmos.line_2d(origin, endpoint, color);
+        if segment == 0 {
+            left_endpoint = Some(endpoint);
+        }
 
         if let Some(previous) = previous {
             gizmos.line_2d(previous, endpoint, color);
         }
         previous = Some(endpoint);
+    }
+
+    if let Some(left_endpoint) = left_endpoint {
+        gizmos.line_2d(origin, left_endpoint, color);
+    }
+
+    if let Some(right_endpoint) = previous {
+        gizmos.line_2d(origin, right_endpoint, color);
     }
 }
 
@@ -315,12 +339,169 @@ fn is_inside_map(position_m: Vec2, map_size_m: Vec2) -> bool {
         && position_m.y <= half_size.y
 }
 
+const ORDER_DESTINATION_RADIUS: f32 = 4.0;
+const CONTACT_BOX_SIZE: f32 = 24.0;
+const ACTIVE_CONTACT_COLOR: Color = Color::srgb(1.0, 0.9, 0.0);
+const STALE_CONTACT_COLOR: Color = Color::srgb(0.55, 0.45, 0.0);
+
+fn draw_selected_unit_order(
+    selected: Res<SelectedUnit>,
+    units: Query<(&BattlefieldPosition, Option<&UnitOrder>), With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok((position, order)) = units.get(entity) else {
+        return;
+    };
+
+    let Some(UnitOrder::MoveTo { destination_m }) = order else {
+        return;
+    };
+
+    let start = position.0.map(meters);
+    let destination = destination_m.map(meters);
+    let color = Color::WHITE;
+
+    gizmos.line_2d(start, destination, color);
+    gizmos
+        .circle_2d(destination, ORDER_DESTINATION_RADIUS, color)
+        .resolution(16);
+}
+
+fn draw_selected_unit_contacts(
+    selected: Res<SelectedUnit>,
+    clock: Res<SimulationClock>,
+    units: Query<(&BattlefieldPosition, &PerceptionMemory), With<Soldier>>,
+    targets: Query<&BattlefieldPosition, With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok((position, memory)) = units.get(entity) else {
+        return;
+    };
+
+    let start = position.0.map(meters);
+
+    for contact in &memory.contacts {
+        let actively_tracked = contact.last_seen_tick == clock.tick;
+        let endpoint_m = if actively_tracked {
+            targets
+                .get(contact.target)
+                .map(|target_position| target_position.0)
+                .unwrap_or(contact.last_seen_position_m)
+        } else {
+            contact.last_seen_position_m
+        };
+        let color = contact_color(actively_tracked);
+
+        let endpoint = endpoint_m.map(meters);
+        gizmos.line_2d(start, endpoint, color);
+        gizmos.rect_2d(
+            Isometry2d::from_translation(endpoint),
+            Vec2::splat(CONTACT_BOX_SIZE),
+            color,
+        );
+    }
+}
+
+fn contact_color(actively_tracked: bool) -> Color {
+    if actively_tracked {
+        ACTIVE_CONTACT_COLOR
+    } else {
+        STALE_CONTACT_COLOR
+    }
+}
+
+fn draw_enemy_contact_boxes(
+    clock: Res<SimulationClock>,
+    control: Res<PlayerControl>,
+    observers: Query<(&Allegiance, &PerceptionMemory), With<Soldier>>,
+    targets: Query<(&BattlefieldPosition, &Allegiance), With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    let mut contacts: Vec<(Entity, Vec2, bool, u64)> = Vec::new();
+
+    for (observer_allegiance, memory) in &observers {
+        if observer_allegiance.side != control.side {
+            continue;
+        }
+
+        for contact in &memory.contacts {
+            let Ok((target_position, target_allegiance)) = targets.get(contact.target) else {
+                continue;
+            };
+
+            if target_allegiance.side == control.side {
+                continue;
+            }
+
+            let actively_tracked = contact.last_seen_tick == clock.tick;
+            let position_m = if actively_tracked {
+                target_position.0
+            } else {
+                contact.last_seen_position_m
+            };
+
+            if let Some(existing) = contacts
+                .iter_mut()
+                .find(|(target, _, _, _)| *target == contact.target)
+            {
+                if actively_tracked || (!existing.2 && contact.last_seen_tick > existing.3) {
+                    *existing = (
+                        contact.target,
+                        position_m,
+                        actively_tracked,
+                        contact.last_seen_tick,
+                    );
+                }
+            } else {
+                contacts.push((
+                    contact.target,
+                    position_m,
+                    actively_tracked,
+                    contact.last_seen_tick,
+                ));
+            }
+        }
+    }
+
+    for (_, position_m, actively_tracked, _) in contacts {
+        gizmos.rect_2d(
+            Isometry2d::from_translation(position_m.map(meters)),
+            Vec2::splat(CONTACT_BOX_SIZE),
+            contact_color(actively_tracked),
+        );
+    }
+}
+
 fn draw_units(
     selected: Res<SelectedUnit>,
+    clock: Res<SimulationClock>,
+    control: Res<PlayerControl>,
+    observers: Query<(&Allegiance, &PerceptionMemory), With<Soldier>>,
     units: Query<(Entity, &BattlefieldPosition, Option<&Heading>, &Allegiance), With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
     for (entity, position, heading, allegiance) in &units {
+        if allegiance.side != control.side {
+            let actively_tracked = observers.iter().any(|(observer_allegiance, memory)| {
+                observer_allegiance.side == control.side
+                    && memory.contacts.iter().any(|contact| {
+                        contact.target == entity && contact.last_seen_tick == clock.tick
+                    })
+            });
+
+            if !actively_tracked {
+                continue;
+            }
+        }
+
         let color = match allegiance.side {
             Side::Blue => Color::srgb(0.0, 0.85, 1.0),
             Side::Red => Color::srgb(1.0, 0.15, 0.1),

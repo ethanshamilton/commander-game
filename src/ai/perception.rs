@@ -84,6 +84,7 @@ pub struct Contact {
     pub target: Entity,
     pub last_seen_position_m: Vec2,
     pub last_seen_time_s: f32,
+    pub last_seen_tick: u64,
     pub confidence: f32,
     pub kind: ContactKind,
 }
@@ -174,6 +175,7 @@ pub fn update_visual_perception(
                     target,
                     last_seen_position_m: target_position_m,
                     last_seen_time_s: clock.elapsed_s,
+                    last_seen_tick: clock.tick,
                     confidence: signature.visual.clamp(0.0, 1.0),
                     kind: ContactKind::Visual,
                 },
