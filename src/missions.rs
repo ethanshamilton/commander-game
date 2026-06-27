@@ -1,4 +1,4 @@
-use crate::maps::{MapDefinition, DEMO_MAP};
+use crate::maps::{DEMO_MAP, MapDefinition};
 use crate::units::{Rank, Role, Side};
 
 pub struct MissionDefinition {

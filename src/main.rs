@@ -3,6 +3,7 @@ mod ai;
 mod gameplay;
 mod maps;
 mod missions;
+mod player;
 mod screens;
 mod units;
 
@@ -10,6 +11,7 @@ use ai::AiPlugins;
 use bevy::gilrs::GilrsPlugin;
 use bevy::prelude::*;
 use gameplay::GameplayPlugins;
+use player::PlayerPlugins;
 use screens::ScreensPlugins;
 
 fn main() {
@@ -17,6 +19,7 @@ fn main() {
         .add_plugins(DefaultPlugins.build().disable::<GilrsPlugin>())
         .add_plugins(GameplayPlugins)
         .add_plugins(AiPlugins)
+        .add_plugins(PlayerPlugins)
         .add_plugins(ScreensPlugins)
         .init_state::<GameState>()
         .run();

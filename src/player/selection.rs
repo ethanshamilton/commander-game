@@ -1,0 +1,73 @@
+use crate::GameState;
+use crate::gameplay::components::BattlefieldPosition;
+use crate::gameplay::measurements::meters;
+use crate::units::Soldier;
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+
+pub const INFO_PANEL_WIDTH_PX: f32 = 240.0;
+const SIDEBAR_WIDTH_PX: f32 = 200.0;
+const BOTTOM_BAR_HEIGHT_PX: f32 = 100.0;
+const SELECTION_RADIUS_M: f32 = 2.0;
+
+pub struct SelectionPlugin;
+
+impl Plugin for SelectionPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<SelectedUnit>().add_systems(
+            Update,
+            select_unit.run_if(in_state(GameState::MissionScreen)),
+        );
+    }
+}
+
+#[derive(Resource, Debug, Default, Clone, Copy)]
+pub struct SelectedUnit {
+    pub entity: Option<Entity>,
+}
+
+fn select_unit(
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    units: Query<(Entity, &BattlefieldPosition), With<Soldier>>,
+    mut selected: ResMut<SelectedUnit>,
+) {
+    if !mouse_buttons.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
+
+    if cursor_position.x <= SIDEBAR_WIDTH_PX || cursor_position.y <= BOTTOM_BAR_HEIGHT_PX {
+        return;
+    }
+
+    if selected.entity.is_some() && cursor_position.x >= window.width() - INFO_PANEL_WIDTH_PX {
+        return;
+    }
+
+    let Ok((camera, camera_transform)) = cameras.single() else {
+        return;
+    };
+
+    let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) else {
+        return;
+    };
+
+    let selection_radius = meters(SELECTION_RADIUS_M);
+    selected.entity = units
+        .iter()
+        .filter_map(|(entity, position)| {
+            let distance = position.0.distance(world_position);
+            (distance <= selection_radius).then_some((entity, distance))
+        })
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(entity, _)| entity);
+}

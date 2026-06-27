@@ -1,9 +1,11 @@
+use crate::GameState;
+use crate::ai::perception::{EyeHeight, VisualSensor, has_line_of_sight};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::measurements::meters;
+use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
 use crate::maps::MapDefinition;
+use crate::player::selection::SelectedUnit;
 use crate::units::{Allegiance, Side, Soldier};
-use crate::GameState;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 
@@ -18,6 +20,7 @@ impl Plugin for GameplayRenderingPlugin {
                 zoom_battlefield_camera,
                 draw_battlefield_grid,
                 draw_topography,
+                draw_selected_unit_sensor_cone,
                 draw_units,
             )
                 .run_if(in_state(GameState::MissionScreen)),
@@ -99,8 +102,8 @@ fn zoom_battlefield_camera(
 
     for mut projection in &mut cameras {
         if let Projection::Orthographic(orthographic) = projection.as_mut() {
-            orthographic.scale = (orthographic.scale * zoom_factor)
-                .clamp(MIN_CAMERA_SCALE, MAX_CAMERA_SCALE);
+            orthographic.scale =
+                (orthographic.scale * zoom_factor).clamp(MIN_CAMERA_SCALE, MAX_CAMERA_SCALE);
         }
     }
 }
@@ -123,9 +126,16 @@ fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
     gizmos.rect_2d(Isometry2d::IDENTITY, size, border_color);
 
     // Center axes give the empty map a radar-screen feel and establish orientation.
-    gizmos.line_2d(Vec2::new(-size.x / 2.0, 0.0), Vec2::new(size.x / 2.0, 0.0), axis_color);
-    gizmos.line_2d(Vec2::new(0.0, -size.y / 2.0), Vec2::new(0.0, size.y / 2.0), axis_color);
-
+    gizmos.line_2d(
+        Vec2::new(-size.x / 2.0, 0.0),
+        Vec2::new(size.x / 2.0, 0.0),
+        axis_color,
+    );
+    gizmos.line_2d(
+        Vec2::new(0.0, -size.y / 2.0),
+        Vec2::new(0.0, size.y / 2.0),
+        axis_color,
+    );
 }
 
 const TOPOGRAPHY_SAMPLE_SPACING_METERS: f32 = 5.0;
@@ -167,19 +177,38 @@ fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
     }
 }
 
-fn draw_contour_cell(
-    gizmos: &mut Gizmos,
-    color: Color,
-    contour_m: f32,
-    corners: [(Vec2, f32); 4],
-) {
+fn draw_contour_cell(gizmos: &mut Gizmos, color: Color, contour_m: f32, corners: [(Vec2, f32); 4]) {
     let mut intersections = [Vec2::ZERO; 4];
     let mut count = 0;
 
-    push_contour_intersection(corners[0], corners[1], contour_m, &mut intersections, &mut count);
-    push_contour_intersection(corners[1], corners[2], contour_m, &mut intersections, &mut count);
-    push_contour_intersection(corners[2], corners[3], contour_m, &mut intersections, &mut count);
-    push_contour_intersection(corners[3], corners[0], contour_m, &mut intersections, &mut count);
+    push_contour_intersection(
+        corners[0],
+        corners[1],
+        contour_m,
+        &mut intersections,
+        &mut count,
+    );
+    push_contour_intersection(
+        corners[1],
+        corners[2],
+        contour_m,
+        &mut intersections,
+        &mut count,
+    );
+    push_contour_intersection(
+        corners[2],
+        corners[3],
+        contour_m,
+        &mut intersections,
+        &mut count,
+    );
+    push_contour_intersection(
+        corners[3],
+        corners[0],
+        contour_m,
+        &mut intersections,
+        &mut count,
+    );
 
     for segment in intersections[..count].chunks_exact(2) {
         gizmos.line_2d(segment[0].map(meters), segment[1].map(meters), color);
@@ -203,11 +232,95 @@ fn push_contour_intersection(
     }
 }
 
-fn draw_units(
-    units: Query<(&BattlefieldPosition, Option<&Heading>, &Allegiance), With<Soldier>>,
+const SENSOR_CONE_SEGMENTS: usize = 48;
+const SENSOR_VISIBILITY_STEP_METERS: f32 = 2.0;
+const SELECTED_UNIT_BOX_SIZE: f32 = 20.0;
+
+fn draw_selected_unit_sensor_cone(
+    selected: Res<SelectedUnit>,
+    map: Res<BattlefieldMap>,
+    units: Query<(&BattlefieldPosition, &Heading, &VisualSensor, &EyeHeight), With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
-    for (position, heading, allegiance) in &units {
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok((position, Heading(heading), sensor, eye_height)) = units.get(entity) else {
+        return;
+    };
+
+    let origin = position.0;
+    let origin_m = origin.map(to_meters);
+    let half_fov = sensor.fov_radians / 2.0;
+    let color = Color::srgba(1.0, 1.0, 1.0, 0.28);
+
+    let left_angle = *heading - half_fov;
+    let right_angle = *heading + half_fov;
+    let mut previous = None;
+
+    for segment in 0..=SENSOR_CONE_SEGMENTS {
+        let t = segment as f32 / SENSOR_CONE_SEGMENTS as f32;
+        let angle = left_angle.lerp(right_angle, t);
+        let endpoint =
+            visible_sensor_endpoint(&map, origin_m, angle, sensor.range_m, eye_height.height_m);
+
+        gizmos.line_2d(origin, endpoint, color);
+
+        if let Some(previous) = previous {
+            gizmos.line_2d(previous, endpoint, color);
+        }
+        previous = Some(endpoint);
+    }
+}
+
+fn visible_sensor_endpoint(
+    map: &BattlefieldMap,
+    origin_m: Vec2,
+    angle: f32,
+    max_range_m: f32,
+    eye_height_m: f32,
+) -> Vec2 {
+    let direction = Vec2::from_angle(angle);
+    let mut distance_m = SENSOR_VISIBILITY_STEP_METERS;
+    let mut last_visible_m = origin_m;
+
+    while distance_m <= max_range_m {
+        let candidate_m = origin_m + direction * distance_m;
+
+        if !is_inside_map(candidate_m, map.size_m)
+            || !has_line_of_sight(
+                &map.terrain,
+                origin_m,
+                eye_height_m,
+                candidate_m,
+                eye_height_m,
+            )
+        {
+            break;
+        }
+
+        last_visible_m = candidate_m;
+        distance_m += SENSOR_VISIBILITY_STEP_METERS;
+    }
+
+    last_visible_m.map(meters)
+}
+
+fn is_inside_map(position_m: Vec2, map_size_m: Vec2) -> bool {
+    let half_size = map_size_m / 2.0;
+    position_m.x >= -half_size.x
+        && position_m.x <= half_size.x
+        && position_m.y >= -half_size.y
+        && position_m.y <= half_size.y
+}
+
+fn draw_units(
+    selected: Res<SelectedUnit>,
+    units: Query<(Entity, &BattlefieldPosition, Option<&Heading>, &Allegiance), With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    for (entity, position, heading, allegiance) in &units {
         let color = match allegiance.side {
             Side::Blue => Color::srgb(0.0, 0.85, 1.0),
             Side::Red => Color::srgb(1.0, 0.15, 0.1),
@@ -216,6 +329,14 @@ fn draw_units(
         let p = position.0;
         let radius = 7.0;
         gizmos.circle_2d(p, radius, color).resolution(24);
+
+        if selected.entity == Some(entity) {
+            gizmos.rect_2d(
+                Isometry2d::from_translation(p),
+                Vec2::splat(SELECTED_UNIT_BOX_SIZE),
+                Color::WHITE,
+            );
+        }
 
         if let Some(Heading(angle)) = heading {
             gizmos.line_2d(p, p + Vec2::from_angle(*angle) * radius, color);

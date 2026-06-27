@@ -1,9 +1,10 @@
 use crate::actions::*;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::measurements::meters;
+use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::rendering::BattlefieldMap;
-use crate::missions::{MissionDefinition, DEMO_MISSION};
+use crate::missions::{DEMO_MISSION, MissionDefinition};
+use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::units::*;
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
@@ -18,6 +19,12 @@ pub struct MissionScreenRoot;
 
 #[derive(Component)]
 pub struct MissionEntity;
+
+#[derive(Component)]
+pub struct SelectedUnitInfoPanel;
+
+#[derive(Component)]
+pub struct SelectedUnitInfoText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -83,10 +90,14 @@ impl Plugin for MissionScreenPlugin {
                 OnEnter(crate::GameState::MissionScreen),
                 (setup_mission_ui, setup_demo_mission),
             )
-            .add_systems(OnExit(crate::GameState::MissionScreen), cleanup_mission_scene)
+            .add_systems(
+                OnExit(crate::GameState::MissionScreen),
+                cleanup_mission_scene,
+            )
             .add_systems(
                 Update,
-                update_menu_visibility.run_if(in_state(crate::GameState::MissionScreen)),
+                (update_menu_visibility, update_selected_unit_info_panel)
+                    .run_if(in_state(crate::GameState::MissionScreen)),
             );
     }
 }
@@ -111,6 +122,74 @@ pub fn update_menu_visibility(
             Visibility::Hidden
         };
     }
+}
+
+pub fn update_selected_unit_info_panel(
+    selected: Res<SelectedUnit>,
+    mut panel_query: Query<&mut Node, With<SelectedUnitInfoPanel>>,
+    mut text_query: Query<&mut Text, With<SelectedUnitInfoText>>,
+    units: Query<(
+        &Soldier,
+        &Allegiance,
+        &Health,
+        &Mobility,
+        &BattlefieldPosition,
+        Option<&Heading>,
+        Option<&VisualSensor>,
+        Option<&PerceptionMemory>,
+    )>,
+) {
+    let Ok(mut panel_node) = panel_query.single_mut() else {
+        return;
+    };
+
+    let Some(entity) = selected.entity else {
+        panel_node.display = Display::None;
+        return;
+    };
+
+    let Ok((soldier, allegiance, health, mobility, position, heading, visual_sensor, memory)) =
+        units.get(entity)
+    else {
+        panel_node.display = Display::None;
+        return;
+    };
+
+    panel_node.display = Display::Flex;
+
+    let position_m = position.0.map(to_meters);
+    let heading_text = heading
+        .map(|Heading(angle)| format!("{angle:.2} rad"))
+        .unwrap_or_else(|| "n/a".to_string());
+    let sensor_text = visual_sensor
+        .map(|sensor| {
+            format!(
+                "Visual range: {:.0}m\nVisual FOV: {:.0}°",
+                sensor.range_m,
+                sensor.fov_radians.to_degrees()
+            )
+        })
+        .unwrap_or_else(|| "Visual sensor: none".to_string());
+    let contact_count = memory.map(|memory| memory.contacts.len()).unwrap_or(0);
+
+    let Ok(mut text) = text_query.single_mut() else {
+        return;
+    };
+
+    **text = format!(
+        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
+        allegiance.side,
+        soldier.rank,
+        soldier.role,
+        health.current,
+        health.max,
+        mobility.speed,
+        position_m.x,
+        position_m.y,
+        heading_text,
+        sensor_text,
+        contact_count,
+    );
 }
 
 /// Setup the entire mission UI hierarchy using flexbox
@@ -235,6 +314,43 @@ pub fn setup_mission_ui(mut commands: Commands) {
                             );
                         });
                 });
+
+            // Right-side selected unit info panel. `Display::None` keeps it out of layout
+            // until a unit is selected.
+            parent
+                .spawn((
+                    SelectedUnitInfoPanel,
+                    Node {
+                        display: Display::None,
+                        width: Val::Px(INFO_PANEL_WIDTH_PX),
+                        height: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(8.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.08, 0.08, 0.08)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Selected Unit"),
+                        TextFont {
+                            font_size: FontSize::Px(22.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    panel.spawn((
+                        SelectedUnitInfoText,
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(16.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                    ));
+                });
         });
 }
 
@@ -258,7 +374,10 @@ pub fn setup_demo_mission(mut commands: Commands) {
 }
 
 pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
-    info!("Spawning mission: {} on map: {}", mission.name, mission.map.name);
+    info!(
+        "Spawning mission: {} on map: {}",
+        mission.name, mission.map.name
+    );
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
 
     for unit in mission.units {
@@ -267,7 +386,10 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
             unit.rank,
             unit.role,
             unit.side,
-            Vec2::new(meters(unit.position_meters[0]), meters(unit.position_meters[1])),
+            Vec2::new(
+                meters(unit.position_meters[0]),
+                meters(unit.position_meters[1]),
+            ),
             unit.heading_radians,
         );
     }
@@ -309,4 +431,3 @@ pub fn spawn_soldier_at(
         rank, role, side
     );
 }
-

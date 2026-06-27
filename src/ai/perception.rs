@@ -1,9 +1,9 @@
+use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::to_meters;
 use crate::gameplay::rendering::BattlefieldMap;
 use crate::gameplay::terrain::TerrainHeight;
 use crate::units::{Allegiance, Soldier};
-use crate::GameState;
 use bevy::prelude::*;
 
 const DEFAULT_VISUAL_RANGE_M: f32 = 150.0;
@@ -98,22 +98,28 @@ pub enum ContactKind {
 fn update_visual_perception(
     time: Res<Time>,
     map: Res<BattlefieldMap>,
-    mut observers: Query<(
-        Entity,
-        &BattlefieldPosition,
-        &Heading,
-        &VisualSensor,
-        &EyeHeight,
-        &Allegiance,
-        &mut PerceptionMemory,
-    ), With<Soldier>>,
-    targets: Query<(
-        Entity,
-        &BattlefieldPosition,
-        Option<&EyeHeight>,
-        &SensorSignature,
-        &Allegiance,
-    ), With<Soldier>>,
+    mut observers: Query<
+        (
+            Entity,
+            &BattlefieldPosition,
+            &Heading,
+            &VisualSensor,
+            &EyeHeight,
+            &Allegiance,
+            &mut PerceptionMemory,
+        ),
+        With<Soldier>,
+    >,
+    targets: Query<
+        (
+            Entity,
+            &BattlefieldPosition,
+            Option<&EyeHeight>,
+            &SensorSignature,
+            &Allegiance,
+        ),
+        With<Soldier>,
+    >,
 ) {
     for (
         observer,
@@ -194,7 +200,7 @@ fn is_in_visual_cone(
     facing.dot(target_direction) >= min_dot
 }
 
-fn has_line_of_sight(
+pub fn has_line_of_sight(
     terrain: &impl TerrainHeight,
     observer_position_m: Vec2,
     observer_eye_height_m: f32,

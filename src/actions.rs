@@ -5,9 +5,7 @@ use crate::screens::mission::{MenuId, MenuState};
 use crate::units::*;
 use bevy::prelude::*;
 use bevy::ui::Checked;
-use bevy::ui_widgets::{
-    Activate, Button, Checkbox, ValueChange, checkbox_self_update, observe,
-};
+use bevy::ui_widgets::{Activate, Button, Checkbox, ValueChange, checkbox_self_update, observe};
 
 // ============================================================================
 // UI ACTIONS
