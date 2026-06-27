@@ -1,4 +1,5 @@
 use crate::actions::*;
+use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::meters;
 use crate::gameplay::rendering::BattlefieldMap;
@@ -297,6 +298,10 @@ pub fn spawn_soldier_at(
         Inventory { items: vec![] },
         BattlefieldPosition(position),
         Heading(heading_radians),
+        VisualSensor::default(),
+        EyeHeight::default(),
+        SensorSignature::default(),
+        PerceptionMemory::default(),
     ));
 
     info!(

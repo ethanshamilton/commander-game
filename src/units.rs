@@ -60,7 +60,7 @@ pub struct Item {
 
 // ENUMS
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Blue,
     Red,
