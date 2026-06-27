@@ -16,6 +16,18 @@ impl Plugin for GameplayRenderingPlugin {
     }
 }
 
+pub const BEVY_UNITS_PER_METER: f32 = 10.0;
+pub const GRID_SPACING_METERS: f32 = 10.0;
+
+pub const fn meters(value: f32) -> f32 {
+    value * BEVY_UNITS_PER_METER
+}
+
+#[allow(dead_code)]
+pub const fn to_meters(bevy_units: f32) -> f32 {
+    bevy_units / BEVY_UNITS_PER_METER
+}
+
 #[derive(Resource, Debug, Clone)]
 pub struct BattlefieldMap {
     pub cells: UVec2,
@@ -26,7 +38,7 @@ impl Default for BattlefieldMap {
     fn default() -> Self {
         Self {
             cells: UVec2::new(32, 24),
-            cell_size: 32.0,
+            cell_size: meters(GRID_SPACING_METERS),
         }
     }
 }
@@ -80,10 +92,6 @@ fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
     gizmos.line_2d(Vec2::new(-size.x / 2.0, 0.0), Vec2::new(size.x / 2.0, 0.0), axis_color);
     gizmos.line_2d(Vec2::new(0.0, -size.y / 2.0), Vec2::new(0.0, size.y / 2.0), axis_color);
 
-    // Range rings.
-    for radius in [128.0, 256.0, 384.0] {
-        gizmos.circle_2d(Isometry2d::IDENTITY, radius, axis_color).resolution(96);
-    }
 }
 
 fn draw_units(
@@ -97,12 +105,11 @@ fn draw_units(
         };
 
         let p = position.0;
-        gizmos.circle_2d(p, 7.0, color).resolution(24);
-        gizmos.cross_2d(p, 10.0, color);
+        let radius = 7.0;
+        gizmos.circle_2d(p, radius, color).resolution(24);
 
         if let Some(Heading(angle)) = heading {
-            let facing = Vec2::from_angle(*angle) * 20.0;
-            gizmos.line_2d(p, p + facing, color);
+            gizmos.line_2d(p, p + Vec2::from_angle(*angle) * radius, color);
         }
     }
 }
