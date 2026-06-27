@@ -2,6 +2,7 @@ pub mod components;
 pub mod measurements;
 pub mod rendering;
 pub mod simulation;
+pub mod terrain;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use rendering::GameplayRenderingPlugin;

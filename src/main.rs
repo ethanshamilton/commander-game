@@ -1,5 +1,6 @@
 mod actions;
 mod gameplay;
+mod maps;
 mod missions;
 mod screens;
 mod units;

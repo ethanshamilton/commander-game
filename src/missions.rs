@@ -1,7 +1,9 @@
+use crate::maps::{MapDefinition, DEMO_MAP};
 use crate::units::{Rank, Role, Side};
 
 pub struct MissionDefinition {
     pub name: &'static str,
+    pub map: &'static MapDefinition,
     pub units: &'static [MissionUnit],
 }
 
@@ -15,6 +17,7 @@ pub struct MissionUnit {
 
 pub const DEMO_MISSION: MissionDefinition = MissionDefinition {
     name: "Demo Mission",
+    map: &DEMO_MAP,
     units: &[
         MissionUnit {
             side: Side::Red,

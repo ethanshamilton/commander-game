@@ -1,5 +1,7 @@
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::meters;
+use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
+use crate::maps::MapDefinition;
 use crate::units::{Allegiance, Side, Soldier};
 use crate::GameState;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
@@ -15,6 +17,7 @@ impl Plugin for GameplayRenderingPlugin {
                 pan_battlefield_camera,
                 zoom_battlefield_camera,
                 draw_battlefield_grid,
+                draw_topography,
                 draw_units,
             )
                 .run_if(in_state(GameState::MissionScreen)),
@@ -26,15 +29,30 @@ pub const GRID_SPACING_METERS: f32 = 10.0;
 
 #[derive(Resource, Debug, Clone)]
 pub struct BattlefieldMap {
+    pub size_m: Vec2,
     pub cells: UVec2,
     pub cell_size: f32,
+    pub terrain: TerrainDefinition,
+}
+
+impl BattlefieldMap {
+    pub fn from_definition(map: &MapDefinition) -> Self {
+        Self {
+            size_m: map.size_m,
+            cells: (map.size_m / GRID_SPACING_METERS).as_uvec2(),
+            cell_size: meters(GRID_SPACING_METERS),
+            terrain: map.terrain,
+        }
+    }
 }
 
 impl Default for BattlefieldMap {
     fn default() -> Self {
         Self {
+            size_m: Vec2::new(320.0, 240.0),
             cells: UVec2::new(32, 24),
             cell_size: meters(GRID_SPACING_METERS),
+            terrain: TerrainDefinition::Flat { height_m: 0.0 },
         }
     }
 }
@@ -101,13 +119,88 @@ fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
         )
         .outer_edges();
 
-    let size = map.cells.as_vec2() * map.cell_size;
+    let size = map.size_m.map(meters);
     gizmos.rect_2d(Isometry2d::IDENTITY, size, border_color);
 
     // Center axes give the empty map a radar-screen feel and establish orientation.
     gizmos.line_2d(Vec2::new(-size.x / 2.0, 0.0), Vec2::new(size.x / 2.0, 0.0), axis_color);
     gizmos.line_2d(Vec2::new(0.0, -size.y / 2.0), Vec2::new(0.0, size.y / 2.0), axis_color);
 
+}
+
+const TOPOGRAPHY_SAMPLE_SPACING_METERS: f32 = 5.0;
+const CONTOUR_INTERVAL_METERS: f32 = 2.0;
+const MAX_CONTOUR_HEIGHT_METERS: f32 = 20.0;
+
+fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
+    let contour_color = Color::srgba(0.78, 0.78, 0.78, 0.45);
+    let min_m = -map.size_m / 2.0;
+    let cells = (map.size_m / TOPOGRAPHY_SAMPLE_SPACING_METERS).as_uvec2();
+
+    for z in 0..cells.y {
+        for x in 0..cells.x {
+            let p00 = min_m
+                + Vec2::new(
+                    x as f32 * TOPOGRAPHY_SAMPLE_SPACING_METERS,
+                    z as f32 * TOPOGRAPHY_SAMPLE_SPACING_METERS,
+                );
+            let p10 = p00 + Vec2::X * TOPOGRAPHY_SAMPLE_SPACING_METERS;
+            let p01 = p00 + Vec2::Y * TOPOGRAPHY_SAMPLE_SPACING_METERS;
+            let p11 = p00 + Vec2::splat(TOPOGRAPHY_SAMPLE_SPACING_METERS);
+
+            let h00 = map.terrain.height_at_m(p00);
+            let h10 = map.terrain.height_at_m(p10);
+            let h01 = map.terrain.height_at_m(p01);
+            let h11 = map.terrain.height_at_m(p11);
+
+            let mut contour = CONTOUR_INTERVAL_METERS;
+            while contour <= MAX_CONTOUR_HEIGHT_METERS {
+                draw_contour_cell(
+                    &mut gizmos,
+                    contour_color,
+                    contour,
+                    [(p00, h00), (p10, h10), (p11, h11), (p01, h01)],
+                );
+                contour += CONTOUR_INTERVAL_METERS;
+            }
+        }
+    }
+}
+
+fn draw_contour_cell(
+    gizmos: &mut Gizmos,
+    color: Color,
+    contour_m: f32,
+    corners: [(Vec2, f32); 4],
+) {
+    let mut intersections = [Vec2::ZERO; 4];
+    let mut count = 0;
+
+    push_contour_intersection(corners[0], corners[1], contour_m, &mut intersections, &mut count);
+    push_contour_intersection(corners[1], corners[2], contour_m, &mut intersections, &mut count);
+    push_contour_intersection(corners[2], corners[3], contour_m, &mut intersections, &mut count);
+    push_contour_intersection(corners[3], corners[0], contour_m, &mut intersections, &mut count);
+
+    for segment in intersections[..count].chunks_exact(2) {
+        gizmos.line_2d(segment[0].map(meters), segment[1].map(meters), color);
+    }
+}
+
+fn push_contour_intersection(
+    a: (Vec2, f32),
+    b: (Vec2, f32),
+    contour_m: f32,
+    intersections: &mut [Vec2; 4],
+    count: &mut usize,
+) {
+    let (pa, ha) = a;
+    let (pb, hb) = b;
+
+    if (ha < contour_m && hb >= contour_m) || (hb < contour_m && ha >= contour_m) {
+        let t = (contour_m - ha) / (hb - ha);
+        intersections[*count] = pa.lerp(pb, t);
+        *count += 1;
+    }
 }
 
 fn draw_units(

@@ -1,6 +1,7 @@
 use crate::actions::*;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::meters;
+use crate::gameplay::rendering::BattlefieldMap;
 use crate::missions::{MissionDefinition, DEMO_MISSION};
 use crate::units::*;
 use bevy::camera::visibility::Visibility;
@@ -256,7 +257,8 @@ pub fn setup_demo_mission(mut commands: Commands) {
 }
 
 pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
-    info!("Spawning mission: {}", mission.name);
+    info!("Spawning mission: {} on map: {}", mission.name, mission.map.name);
+    commands.insert_resource(BattlefieldMap::from_definition(mission.map));
 
     for unit in mission.units {
         spawn_soldier_at(
