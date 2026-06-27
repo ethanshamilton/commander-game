@@ -1,8 +1,8 @@
 use crate::actions::*;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::rendering::BattlefieldMap;
+use crate::gameplay::simulation::SimulationClock;
 use crate::missions::{DEMO_MISSION, MissionDefinition};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::units::*;
@@ -25,6 +25,9 @@ pub struct SelectedUnitInfoPanel;
 
 #[derive(Component)]
 pub struct SelectedUnitInfoText;
+
+#[derive(Component)]
+pub struct SimulationClockText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -96,7 +99,11 @@ impl Plugin for MissionScreenPlugin {
             )
             .add_systems(
                 Update,
-                (update_menu_visibility, update_selected_unit_info_panel)
+                (
+                    update_menu_visibility,
+                    update_selected_unit_info_panel,
+                    update_simulation_clock_text,
+                )
                     .run_if(in_state(crate::GameState::MissionScreen)),
             );
     }
@@ -157,7 +164,7 @@ pub fn update_selected_unit_info_panel(
 
     panel_node.display = Display::Flex;
 
-    let position_m = position.0.map(to_meters);
+    let position_m = position.0;
     let heading_text = heading
         .map(|Heading(angle)| format!("{angle:.2} rad"))
         .unwrap_or_else(|| "n/a".to_string());
@@ -192,8 +199,50 @@ pub fn update_selected_unit_info_panel(
     );
 }
 
+pub fn update_simulation_clock_text(
+    clock: Res<SimulationClock>,
+    mut text_query: Query<&mut Text, With<SimulationClockText>>,
+) {
+    if !clock.is_changed() {
+        return;
+    }
+
+    let Ok(mut text) = text_query.single_mut() else {
+        return;
+    };
+
+    let minutes = (clock.elapsed_s / 60.0).floor() as u32;
+    let seconds = (clock.elapsed_s % 60.0).floor() as u32;
+    let paused = if clock.paused { " PAUSED" } else { "" };
+    **text = format!("T+{minutes:02}:{seconds:02}  tick {}{paused}", clock.tick);
+}
+
 /// Setup the entire mission UI hierarchy using flexbox
 pub fn setup_mission_ui(mut commands: Commands) {
+    commands
+        .spawn((
+            MissionScreenRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(10.0),
+                right: Val::Px(12.0),
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.75)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                SimulationClockText,
+                Text::new("T+00:00  tick 0"),
+                TextFont {
+                    font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 1.0, 0.7)),
+            ));
+        });
+
     // Root flex container (fills screen, horizontal layout)
     commands
         .spawn((
@@ -386,10 +435,7 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
             unit.rank,
             unit.role,
             unit.side,
-            Vec2::new(
-                meters(unit.position_meters[0]),
-                meters(unit.position_meters[1]),
-            ),
+            Vec2::new(unit.position_meters[0], unit.position_meters[1]),
             unit.heading_radians,
         );
     }
@@ -416,7 +462,7 @@ pub fn spawn_soldier_at(
             current: 100,
             max: 100,
         },
-        Mobility { speed: 10 },
+        Mobility { speed: 1 },
         Inventory { items: vec![] },
         BattlefieldPosition(position),
         Heading(heading_radians),

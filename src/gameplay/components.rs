@@ -1,9 +1,8 @@
 use bevy::prelude::*;
 
-/// World-space location on the tactical battlefield/radar display.
+/// Simulation-space location on the tactical battlefield, stored in meters.
 ///
-/// Coordinates are stored in Bevy world units. Gameplay convention:
-/// 10 Bevy units = 1 meter. Use `gameplay::measurements::meters` for conversion.
+/// Rendering converts this to Bevy world units at the display boundary.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BattlefieldPosition(pub Vec2);
 

@@ -1,6 +1,7 @@
 use crate::GameState;
 use crate::gameplay::components::BattlefieldPosition;
-use crate::gameplay::measurements::meters;
+use crate::gameplay::measurements::{meters, to_meters};
+use crate::gameplay::simulation::UnitOrder;
 use crate::units::Soldier;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -16,7 +17,7 @@ impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectedUnit>().add_systems(
             Update,
-            select_unit.run_if(in_state(GameState::MissionScreen)),
+            (select_unit, issue_move_order).run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -65,9 +66,53 @@ fn select_unit(
     selected.entity = units
         .iter()
         .filter_map(|(entity, position)| {
-            let distance = position.0.distance(world_position);
+            let distance = position.0.map(meters).distance(world_position);
             (distance <= selection_radius).then_some((entity, distance))
         })
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity);
+}
+
+fn issue_move_order(
+    mut commands: Commands,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    selected: Res<SelectedUnit>,
+) {
+    if !mouse_buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+
+    let Some(cursor_position) = window.cursor_position() else {
+        return;
+    };
+
+    if cursor_position.x <= SIDEBAR_WIDTH_PX || cursor_position.y <= BOTTOM_BAR_HEIGHT_PX {
+        return;
+    }
+
+    if cursor_position.x >= window.width() - INFO_PANEL_WIDTH_PX {
+        return;
+    }
+
+    let Ok((camera, camera_transform)) = cameras.single() else {
+        return;
+    };
+
+    let Ok(world_position) = camera.viewport_to_world_2d(camera_transform, cursor_position) else {
+        return;
+    };
+
+    commands.entity(entity).insert(UnitOrder::MoveTo {
+        destination_m: world_position.map(to_meters),
+    });
 }

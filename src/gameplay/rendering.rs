@@ -1,7 +1,7 @@
 use crate::GameState;
 use crate::ai::perception::{EyeHeight, VisualSensor, has_line_of_sight};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::measurements::{meters, to_meters};
+use crate::gameplay::measurements::meters;
 use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
 use crate::maps::MapDefinition;
 use crate::player::selection::SelectedUnit;
@@ -250,8 +250,8 @@ fn draw_selected_unit_sensor_cone(
         return;
     };
 
-    let origin = position.0;
-    let origin_m = origin.map(to_meters);
+    let origin_m = position.0;
+    let origin = origin_m.map(meters);
     let half_fov = sensor.fov_radians / 2.0;
     let color = Color::srgba(1.0, 1.0, 1.0, 0.28);
 
@@ -326,7 +326,7 @@ fn draw_units(
             Side::Red => Color::srgb(1.0, 0.15, 0.1),
         };
 
-        let p = position.0;
+        let p = position.0.map(meters);
         let radius = 7.0;
         gizmos.circle_2d(p, radius, color).resolution(24);
 

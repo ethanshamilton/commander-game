@@ -1,7 +1,7 @@
 use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::measurements::to_meters;
 use crate::gameplay::rendering::BattlefieldMap;
+use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::terrain::TerrainHeight;
 use crate::units::{Allegiance, Soldier};
 use bevy::prelude::*;
@@ -17,8 +17,10 @@ pub struct PerceptionPlugin;
 impl Plugin for PerceptionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
-            Update,
-            update_visual_perception.run_if(in_state(GameState::MissionScreen)),
+            FixedUpdate,
+            update_visual_perception
+                .in_set(SimulationSet::Sensors)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -95,8 +97,8 @@ pub enum ContactKind {
     Unknown,
 }
 
-fn update_visual_perception(
-    time: Res<Time>,
+pub fn update_visual_perception(
+    clock: Res<SimulationClock>,
     map: Res<BattlefieldMap>,
     mut observers: Query<
         (
@@ -131,7 +133,7 @@ fn update_visual_perception(
         mut memory,
     ) in &mut observers
     {
-        let observer_position_m = observer_position.0.map(to_meters);
+        let observer_position_m = observer_position.0;
 
         for (target, target_position, target_eye_height, signature, target_allegiance) in &targets {
             if target == observer || target_allegiance.side == observer_allegiance.side {
@@ -142,7 +144,7 @@ fn update_visual_perception(
                 continue;
             }
 
-            let target_position_m = target_position.0.map(to_meters);
+            let target_position_m = target_position.0;
             if !is_in_visual_cone(
                 observer_position_m,
                 *observer_heading,
@@ -171,7 +173,7 @@ fn update_visual_perception(
                 Contact {
                     target,
                     last_seen_position_m: target_position_m,
-                    last_seen_time_s: time.elapsed_secs(),
+                    last_seen_time_s: clock.elapsed_s,
                     confidence: signature.visual.clamp(0.0, 1.0),
                     kind: ContactKind::Visual,
                 },
