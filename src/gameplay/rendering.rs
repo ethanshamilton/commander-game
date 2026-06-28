@@ -1,5 +1,6 @@
 use crate::GameState;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight};
+use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
@@ -28,6 +29,7 @@ impl Plugin for GameplayRenderingPlugin {
                     draw_selected_unit_sensor_cone,
                     draw_selected_unit_order,
                     draw_selected_unit_contacts,
+                    draw_selected_unit_comms,
                     draw_enemy_contact_boxes,
                     draw_units,
                 )
@@ -436,6 +438,51 @@ fn draw_selected_unit_contacts(
             Vec2::splat(CONTACT_BOX_SIZE),
             color,
         );
+    }
+}
+
+fn draw_selected_unit_comms(
+    selected: Res<SelectedUnit>,
+    control: Res<PlayerControl>,
+    units: Query<
+        (
+            &BattlefieldPosition,
+            &Allegiance,
+            &CommsLinks,
+            Option<&VoiceComms>,
+        ),
+        With<Soldier>,
+    >,
+    targets: Query<&BattlefieldPosition, With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok((position, allegiance, comms, voice)) = units.get(entity) else {
+        return;
+    };
+
+    if allegiance.side != control.side {
+        return;
+    }
+
+    let start = position.0.map(meters);
+    let color = Color::srgba(0.78, 0.55, 1.0, 0.75);
+
+    if let Some(voice) = voice {
+        gizmos
+            .circle_2d(start, meters(voice.range_m), color)
+            .resolution(64);
+    }
+
+    for link in &comms.links {
+        let Ok(target_position) = targets.get(link.target) else {
+            continue;
+        };
+
+        gizmos.line_2d(start, target_position.0.map(meters), color);
     }
 }
 

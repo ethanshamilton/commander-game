@@ -1,3 +1,4 @@
+pub mod comms;
 pub mod components;
 pub mod diagnostics;
 pub mod measurements;
@@ -6,6 +7,7 @@ pub mod simulation;
 pub mod terrain;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
+use comms::CommsPlugin;
 use diagnostics::GameplayDiagnosticsPlugin;
 use rendering::GameplayRenderingPlugin;
 use simulation::SimulationPlugin;
@@ -16,6 +18,7 @@ impl PluginGroup for GameplayPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(SimulationPlugin)
+            .add(CommsPlugin)
             .add(GameplayDiagnosticsPlugin)
             .add(GameplayRenderingPlugin)
     }
