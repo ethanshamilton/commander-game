@@ -1,6 +1,6 @@
 use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::gameplay::rendering::BattlefieldMap;
+use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::terrain::TerrainHeight;
 use crate::units::{Allegiance, Soldier};

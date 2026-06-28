@@ -1,6 +1,7 @@
 pub mod comms;
 pub mod components;
 pub mod diagnostics;
+pub mod map;
 pub mod measurements;
 pub mod rendering;
 pub mod simulation;

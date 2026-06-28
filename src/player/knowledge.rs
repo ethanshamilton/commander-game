@@ -91,7 +91,15 @@ fn update_player_tactical_knowledge(
     };
     let player_side = controlled_allegiance.side;
 
-    let reachable = reachable_friendly_units(controlled_entity, player_side, &units);
+    let reachable = reachable_friendly_units(controlled_entity, player_side, |entity| {
+        let Ok((_, _, allegiance, comms, _)) = units.get(entity) else {
+            return None;
+        };
+        Some((
+            allegiance.side,
+            comms.links.iter().map(|link| link.target).collect(),
+        ))
+    });
 
     for entity in &reachable {
         let Ok((_, position, allegiance, _, memory)) = units.get(*entity) else {
@@ -134,19 +142,10 @@ fn update_player_tactical_knowledge(
     }
 }
 
-fn reachable_friendly_units(
+pub fn reachable_friendly_units(
     root: Entity,
     side: Side,
-    units: &Query<
-        (
-            Entity,
-            &BattlefieldPosition,
-            &Allegiance,
-            &CommsLinks,
-            Option<&PerceptionMemory>,
-        ),
-        With<Soldier>,
-    >,
+    mut unit_links: impl FnMut(Entity) -> Option<(Side, Vec<Entity>)>,
 ) -> HashSet<Entity> {
     let mut reachable = HashSet::new();
     let mut frontier = vec![root];
@@ -156,17 +155,17 @@ fn reachable_friendly_units(
             continue;
         }
 
-        let Ok((_, _, allegiance, comms, _)) = units.get(entity) else {
+        let Some((unit_side, links)) = unit_links(entity) else {
             continue;
         };
 
-        if allegiance.side != side {
+        if unit_side != side {
             continue;
         }
 
-        for link in &comms.links {
-            if !reachable.contains(&link.target) {
-                frontier.push(link.target);
+        for target in links {
+            if !reachable.contains(&target) {
+                frontier.push(target);
             }
         }
     }

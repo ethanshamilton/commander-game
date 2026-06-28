@@ -16,3 +16,6 @@ Running/evergreen notes file for the project.
 - Enemies may be able to intercept communications based on the communication type and sensor ranges.
   - For voice communication, if the enemy is in range of the source unit, then it has access to the source unit's intel.
     - This turns out to be relatively complex in that we need a way to account for what it means to have intel be intercepted.
+
+## NEEDS FIX
+- If a friendly unit is within sensor range but outside of comms range then it should be possible to see the position and status of that unit, but not receive information from them or give them commands. Currently if a friendly unit is out of comms range but within visual range, they are considered stale contacts.

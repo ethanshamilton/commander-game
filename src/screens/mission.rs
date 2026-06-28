@@ -3,7 +3,7 @@ use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, Visual
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::diagnostics::SimulationPerf;
-use crate::gameplay::rendering::BattlefieldMap;
+use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::SimulationClock;
 use crate::missions::{DEMO_MISSION, MissionDefinition};
 use crate::player::control::PlayerControl;
