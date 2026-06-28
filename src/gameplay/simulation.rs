@@ -19,6 +19,7 @@ impl Plugin for SimulationPlugin {
                     SimulationSet::Movement,
                     SimulationSet::Comms,
                     SimulationSet::Sensors,
+                    SimulationSet::Reports,
                     SimulationSet::Combat,
                     SimulationSet::Cleanup,
                 )
@@ -47,6 +48,7 @@ pub enum SimulationSet {
     Movement,
     Comms,
     Sensors,
+    Reports,
     Combat,
     Cleanup,
 }

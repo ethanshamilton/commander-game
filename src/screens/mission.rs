@@ -6,6 +6,8 @@ use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::rendering::BattlefieldMap;
 use crate::gameplay::simulation::SimulationClock;
 use crate::missions::{DEMO_MISSION, MissionDefinition};
+use crate::player::control::PlayerControl;
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::units::*;
 use bevy::camera::visibility::Visibility;
@@ -139,6 +141,9 @@ pub fn update_menu_visibility(
 
 pub fn update_selected_unit_info_panel(
     selected: Res<SelectedUnit>,
+    clock: Res<SimulationClock>,
+    control: Res<PlayerControl>,
+    knowledge: Res<PlayerTacticalKnowledge>,
     mut panel_query: Query<&mut Node, With<SelectedUnitInfoPanel>>,
     mut text_query: Query<&mut Text, With<SelectedUnitInfoText>>,
     units: Query<(
@@ -161,29 +166,48 @@ pub fn update_selected_unit_info_panel(
         return;
     };
 
-    let Ok((soldier, allegiance, health, mobility, position, heading, visual_sensor, memory)) =
+    let Ok((soldier, allegiance, health, mobility, _position, heading, visual_sensor, memory)) =
         units.get(entity)
     else {
         panel_node.display = Display::None;
         return;
     };
 
+    let Some(known) = knowledge.get(entity) else {
+        panel_node.display = Display::None;
+        return;
+    };
+
     panel_node.display = Display::Flex;
 
-    let position_m = position.0;
-    let heading_text = heading
-        .map(|Heading(angle)| format!("{angle:.2} rad"))
-        .unwrap_or_else(|| "n/a".to_string());
-    let sensor_text = visual_sensor
-        .map(|sensor| {
-            format!(
-                "Visual range: {:.0}m\nVisual FOV: {:.0}°",
-                sensor.range_m,
-                sensor.fov_radians.to_degrees()
-            )
-        })
-        .unwrap_or_else(|| "Visual sensor: none".to_string());
-    let contact_count = memory.map(|memory| memory.contacts.len()).unwrap_or(0);
+    let is_current = known.last_reported_tick == clock.tick;
+    let is_controlled_side = allegiance.side == control.side;
+    let position_m = known.last_known_position_m;
+    let heading_text = if is_current && is_controlled_side {
+        heading
+            .map(|Heading(angle)| format!("{angle:.2} rad"))
+            .unwrap_or_else(|| "n/a".to_string())
+    } else {
+        "unknown".to_string()
+    };
+    let sensor_text = if is_current && is_controlled_side {
+        visual_sensor
+            .map(|sensor| {
+                format!(
+                    "Visual range: {:.0}m\nVisual FOV: {:.0}°",
+                    sensor.range_m,
+                    sensor.fov_radians.to_degrees()
+                )
+            })
+            .unwrap_or_else(|| "Visual sensor: none".to_string())
+    } else {
+        "Visual sensor: unknown".to_string()
+    };
+    let contact_count = if is_current && is_controlled_side {
+        memory.map(|memory| memory.contacts.len()).unwrap_or(0)
+    } else {
+        0
+    };
 
     let Ok(mut text) = text_query.single_mut() else {
         return;
@@ -485,7 +509,7 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
 
     for unit in mission.units {
-        spawn_soldier_at(
+        let entity = spawn_soldier_at(
             commands,
             unit.rank,
             unit.role,
@@ -493,6 +517,10 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
             Vec2::new(unit.position_meters[0], unit.position_meters[1]),
             unit.heading_radians,
         );
+
+        if unit.side == Side::Blue && matches!(unit.rank, Rank::Sergeant) {
+            commands.entity(entity).insert(PlayerControlledUnit);
+        }
     }
 }
 
@@ -508,29 +536,33 @@ pub fn spawn_soldier_at(
     side: Side,
     position: Vec2,
     heading_radians: f32,
-) {
-    commands.spawn((
-        MissionEntity,
-        Soldier { rank, role },
-        Allegiance { side },
-        Health {
-            current: 100,
-            max: 100,
-        },
-        Mobility { speed: 1 },
-        Inventory { items: vec![] },
-        BattlefieldPosition(position),
-        Heading(heading_radians),
-        VisualSensor::default(),
-        EyeHeight::default(),
-        SensorSignature::default(),
-        PerceptionMemory::default(),
-        VoiceComms::default(),
-        CommsLinks::default(),
-    ));
+) -> Entity {
+    let entity = commands
+        .spawn((
+            MissionEntity,
+            Soldier { rank, role },
+            Allegiance { side },
+            Health {
+                current: 100,
+                max: 100,
+            },
+            Mobility { speed: 1 },
+            Inventory { items: vec![] },
+            BattlefieldPosition(position),
+            Heading(heading_radians),
+            VisualSensor::default(),
+            EyeHeight::default(),
+            SensorSignature::default(),
+            PerceptionMemory::default(),
+            VoiceComms::default(),
+            CommsLinks::default(),
+        ))
+        .id();
 
     info!(
         "Soldier spawned! Rank: {:?}, Role: {:?}, Side: {:?}",
         rank, role, side
     );
+
+    entity
 }

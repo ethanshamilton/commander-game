@@ -1,9 +1,8 @@
 use crate::GameState;
-use crate::ai::perception::PerceptionMemory;
-use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
+use crate::player::knowledge::PlayerTacticalKnowledge;
 use crate::units::{Allegiance, Soldier};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -33,10 +32,7 @@ fn select_unit(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    units: Query<(Entity, &BattlefieldPosition, &Allegiance), With<Soldier>>,
-    observers: Query<(&Allegiance, &PerceptionMemory), With<Soldier>>,
-    control: Res<PlayerControl>,
-    clock: Res<SimulationClock>,
+    knowledge: Res<PlayerTacticalKnowledge>,
     mut selected: ResMut<SelectedUnit>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Left) {
@@ -68,35 +64,18 @@ fn select_unit(
     };
 
     let selection_radius = meters(SELECTION_RADIUS_M);
-    selected.entity = units
+    selected.entity = knowledge
+        .units
         .iter()
-        .filter_map(|(entity, position, allegiance)| {
-            if allegiance.side != control.side
-                && !is_actively_detected_enemy(entity, control.side, clock.tick, &observers)
-            {
-                return None;
-            }
-
-            let distance = position.0.map(meters).distance(world_position);
-            (distance <= selection_radius).then_some((entity, distance))
+        .filter_map(|unit| {
+            let distance = unit
+                .last_known_position_m
+                .map(meters)
+                .distance(world_position);
+            (distance <= selection_radius).then_some((unit.entity, distance))
         })
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity);
-}
-
-fn is_actively_detected_enemy(
-    target: Entity,
-    player_side: crate::units::Side,
-    tick: u64,
-    observers: &Query<(&Allegiance, &PerceptionMemory), With<Soldier>>,
-) -> bool {
-    observers.iter().any(|(observer_allegiance, memory)| {
-        observer_allegiance.side == player_side
-            && memory
-                .contacts
-                .iter()
-                .any(|contact| contact.target == target && contact.last_seen_tick == tick)
-    })
 }
 
 fn issue_move_order(
@@ -106,6 +85,8 @@ fn issue_move_order(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     selected: Res<SelectedUnit>,
     control: Res<PlayerControl>,
+    clock: Res<SimulationClock>,
+    knowledge: Res<PlayerTacticalKnowledge>,
     units: Query<&Allegiance, With<Soldier>>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Right) {
@@ -120,7 +101,7 @@ fn issue_move_order(
         return;
     };
 
-    if allegiance.side != control.side {
+    if allegiance.side != control.side || !knowledge.is_current(entity, clock.tick) {
         return;
     };
 
