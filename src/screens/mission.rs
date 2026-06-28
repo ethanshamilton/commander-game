@@ -1,6 +1,7 @@
 use crate::actions::*;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
+use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::rendering::BattlefieldMap;
 use crate::gameplay::simulation::SimulationClock;
 use crate::missions::{DEMO_MISSION, MissionDefinition};
@@ -28,6 +29,9 @@ pub struct SelectedUnitInfoText;
 
 #[derive(Component)]
 pub struct SimulationClockText;
+
+#[derive(Component)]
+pub struct SimulationPerfText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -103,6 +107,7 @@ impl Plugin for MissionScreenPlugin {
                     update_menu_visibility,
                     update_selected_unit_info_panel,
                     update_simulation_clock_text,
+                    update_simulation_perf_text,
                 )
                     .run_if(in_state(crate::GameState::MissionScreen)),
             );
@@ -217,6 +222,41 @@ pub fn update_simulation_clock_text(
     **text = format!("T+{minutes:02}:{seconds:02}  tick {}{paused}", clock.tick);
 }
 
+pub fn update_simulation_perf_text(
+    perf: Res<SimulationPerf>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<SimulationPerfText>>,
+) {
+    if !perf.is_changed() {
+        return;
+    }
+
+    let Ok((mut text, mut text_color)) = text_query.single_mut() else {
+        return;
+    };
+
+    let utilization_percent = perf.utilization * 100.0;
+    let filled = (perf.utilization * 10.0).round().clamp(0.0, 10.0) as usize;
+    let meter = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+
+    **text = format!(
+        "SIM {:04.1}ms / {:04.1}ms [{}] {:03.0}%",
+        perf.last_tick_s * 1000.0,
+        perf.tick_budget_s * 1000.0,
+        meter,
+        utilization_percent,
+    );
+
+    *text_color = TextColor(if perf.utilization >= 1.0 {
+        Color::srgb(1.0, 0.1, 0.1)
+    } else if perf.utilization >= 0.8 {
+        Color::srgb(1.0, 0.55, 0.0)
+    } else if perf.utilization >= 0.5 {
+        Color::srgb(1.0, 0.9, 0.0)
+    } else {
+        Color::srgb(0.7, 1.0, 0.7)
+    });
+}
+
 /// Setup the entire mission UI hierarchy using flexbox
 pub fn setup_mission_ui(mut commands: Commands) {
     commands
@@ -227,6 +267,9 @@ pub fn setup_mission_ui(mut commands: Commands) {
                 top: Val::Px(10.0),
                 right: Val::Px(12.0),
                 padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexEnd,
+                row_gap: Val::Px(4.0),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.75)),
@@ -237,6 +280,16 @@ pub fn setup_mission_ui(mut commands: Commands) {
                 Text::new("T+00:00  tick 0"),
                 TextFont {
                     font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 1.0, 0.7)),
+            ));
+
+            parent.spawn((
+                SimulationPerfText,
+                Text::new("SIM 00.0ms / 50.0ms [░░░░░░░░░░] 000%"),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::srgb(0.7, 1.0, 0.7)),
@@ -372,7 +425,8 @@ pub fn setup_mission_ui(mut commands: Commands) {
                     Node {
                         display: Display::None,
                         width: Val::Px(INFO_PANEL_WIDTH_PX),
-                        height: Val::Percent(100.0),
+                        height: Val::Auto,
+                        margin: UiRect::top(Val::Px(76.0)),
                         flex_direction: FlexDirection::Column,
                         padding: UiRect::all(Val::Px(12.0)),
                         row_gap: Val::Px(8.0),

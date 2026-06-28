@@ -5,7 +5,7 @@ use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
 use crate::maps::MapDefinition;
-use crate::player::control::PlayerControl;
+use crate::player::control::{PlayerControl, UnitIntelAccess};
 use crate::player::selection::SelectedUnit;
 use crate::units::{Allegiance, Side, Soldier};
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
@@ -251,17 +251,33 @@ const SELECTED_UNIT_BOX_SIZE: f32 = 20.0;
 
 fn draw_selected_unit_sensor_cone(
     selected: Res<SelectedUnit>,
+    control: Res<PlayerControl>,
     map: Res<BattlefieldMap>,
-    units: Query<(&BattlefieldPosition, &Heading, &VisualSensor, &EyeHeight), With<Soldier>>,
+    units: Query<
+        (
+            &BattlefieldPosition,
+            &Heading,
+            &VisualSensor,
+            &EyeHeight,
+            &Allegiance,
+            Option<&UnitIntelAccess>,
+        ),
+        With<Soldier>,
+    >,
     mut gizmos: Gizmos,
 ) {
     let Some(entity) = selected.entity else {
         return;
     };
 
-    let Ok((position, Heading(heading), sensor, eye_height)) = units.get(entity) else {
+    let Ok((position, Heading(heading), sensor, eye_height, allegiance, intel)) = units.get(entity)
+    else {
         return;
     };
+
+    if allegiance.side != control.side && !intel.is_some_and(|intel| intel.reveal_sensor_range) {
+        return;
+    }
 
     let origin_m = position.0;
     let half_fov = sensor.fov_radians / 2.0;
@@ -374,7 +390,16 @@ fn draw_selected_unit_order(
 fn draw_selected_unit_contacts(
     selected: Res<SelectedUnit>,
     clock: Res<SimulationClock>,
-    units: Query<(&BattlefieldPosition, &PerceptionMemory), With<Soldier>>,
+    control: Res<PlayerControl>,
+    units: Query<
+        (
+            &BattlefieldPosition,
+            &Allegiance,
+            &PerceptionMemory,
+            Option<&UnitIntelAccess>,
+        ),
+        With<Soldier>,
+    >,
     targets: Query<&BattlefieldPosition, With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
@@ -382,9 +407,13 @@ fn draw_selected_unit_contacts(
         return;
     };
 
-    let Ok((position, memory)) = units.get(entity) else {
+    let Ok((position, allegiance, memory, intel)) = units.get(entity) else {
         return;
     };
+
+    if allegiance.side != control.side && !intel.is_some_and(|intel| intel.reveal_contacts) {
+        return;
+    }
 
     let start = position.0.map(meters);
 

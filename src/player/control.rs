@@ -14,6 +14,12 @@ pub struct PlayerControl {
     pub side: Side,
 }
 
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct UnitIntelAccess {
+    pub reveal_sensor_range: bool,
+    pub reveal_contacts: bool,
+}
+
 impl Default for PlayerControl {
     fn default() -> Self {
         Self { side: Side::Blue }
