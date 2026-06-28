@@ -7,7 +7,7 @@ use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::terrain::{TerrainDefinition, TerrainHeight};
 use crate::maps::MapDefinition;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
-use crate::player::knowledge::PlayerTacticalKnowledge;
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::SelectedUnit;
 use crate::units::{Allegiance, Side, Soldier};
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
@@ -252,6 +252,8 @@ fn push_contour_intersection(
 const SENSOR_CONE_SEGMENTS: usize = 48;
 const SENSOR_VISIBILITY_STEP_METERS: f32 = 2.0;
 const SELECTED_UNIT_BOX_SIZE: f32 = 20.0;
+const PLAYER_CONTROLLED_STAR_RADIUS: f32 = 5.0;
+const PLAYER_CONTROLLED_STAR_OFFSET: Vec2 = Vec2::new(0.0, 16.0);
 
 fn draw_selected_unit_sensor_cone(
     selected: Res<SelectedUnit>,
@@ -585,10 +587,18 @@ fn draw_units(
     clock: Res<SimulationClock>,
     control: Res<PlayerControl>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    units: Query<(Entity, Option<&Heading>, &Allegiance), With<Soldier>>,
+    units: Query<
+        (
+            Entity,
+            Option<&Heading>,
+            &Allegiance,
+            Option<&PlayerControlledUnit>,
+        ),
+        With<Soldier>,
+    >,
     mut gizmos: Gizmos,
 ) {
-    for (entity, heading, allegiance) in &units {
+    for (entity, heading, allegiance, player_controlled) in &units {
         let Some(known) = knowledge.get(entity) else {
             continue;
         };
@@ -618,6 +628,10 @@ fn draw_units(
         let radius = 7.0;
         gizmos.circle_2d(p, radius, color).resolution(24);
 
+        if player_controlled.is_some() {
+            draw_player_controlled_star(&mut gizmos, p);
+        }
+
         if selected.entity == Some(entity) {
             gizmos.rect_2d(
                 Isometry2d::from_translation(p),
@@ -629,5 +643,41 @@ fn draw_units(
         if let Some(Heading(angle)) = heading {
             gizmos.line_2d(p, p + Vec2::from_angle(*angle) * radius, color);
         }
+    }
+}
+
+fn draw_player_controlled_star(gizmos: &mut Gizmos, position: Vec2) {
+    let position = position + PLAYER_CONTROLLED_STAR_OFFSET;
+    let color = Color::srgb(1.0, 0.82, 0.18);
+    let points = 5;
+    let inner_radius = PLAYER_CONTROLLED_STAR_RADIUS * 0.45;
+    let outer_radius = PLAYER_CONTROLLED_STAR_RADIUS;
+    let step = std::f32::consts::TAU / (points * 2) as f32;
+    let start_angle = std::f32::consts::FRAC_PI_2;
+
+    let mut previous = None;
+    let mut first = None;
+
+    for i in 0..points * 2 {
+        let radius = if i % 2 == 0 {
+            outer_radius
+        } else {
+            inner_radius
+        };
+        let point = position + Vec2::from_angle(start_angle + i as f32 * step) * radius;
+
+        if first.is_none() {
+            first = Some(point);
+        }
+
+        if let Some(previous) = previous {
+            gizmos.line_2d(previous, point, color);
+        }
+
+        previous = Some(point);
+    }
+
+    if let (Some(previous), Some(first)) = (previous, first) {
+        gizmos.line_2d(previous, first, color);
     }
 }

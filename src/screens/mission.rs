@@ -526,7 +526,22 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
 
 /// Spawn a soldier entity (gameplay logic)
 pub fn spawn_soldier(commands: &mut Commands, rank: Rank, role: Role, side: Side) {
-    spawn_soldier_at(commands, rank, role, side, Vec2::ZERO, 0.0);
+    let position = default_spawn_position_m(side);
+    let heading = match side {
+        Side::Blue => std::f32::consts::PI,
+        Side::Red => 0.0,
+    };
+
+    spawn_soldier_at(commands, rank, role, side, position, heading);
+}
+
+fn default_spawn_position_m(side: Side) -> Vec2 {
+    match side {
+        // Keep UI-spawned units off the center hill so terrain occlusion is visually legible,
+        // and close enough to the demo command group to be in voice contact.
+        Side::Blue => Vec2::new(80.0, -45.0),
+        Side::Red => Vec2::new(-80.0, -45.0),
+    }
 }
 
 pub fn spawn_soldier_at(
