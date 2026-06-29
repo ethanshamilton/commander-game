@@ -6,7 +6,6 @@ use bevy::prelude::*;
 pub struct MapDefinition {
     pub name: &'static str,
     pub size_m: Vec2,
-    #[allow(dead_code)]
     pub terrain: TerrainDefinition,
 }
 

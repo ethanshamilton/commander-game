@@ -103,18 +103,13 @@ fn update_player_tactical_knowledge(
         ))
     });
 
+    // First fold in sensor contacts from reachable friendly units. These reports may include
+    // friendlies outside the comms graph, but they should not override direct position reports
+    // for units that are already reachable through comms.
     for entity in &reachable {
-        let Ok((_, position, allegiance, _, memory)) = units.get(*entity) else {
+        let Ok((_, _, _, _, memory)) = units.get(*entity) else {
             continue;
         };
-
-        knowledge.upsert_report(KnownUnit {
-            entity: *entity,
-            side: allegiance.side,
-            last_known_position_m: position.0,
-            last_observed_tick: clock.tick,
-            last_reported_tick: clock.tick,
-        });
 
         let Some(memory) = memory else {
             continue;
@@ -124,10 +119,6 @@ fn update_player_tactical_knowledge(
             let Ok((target_position, target_allegiance)) = target_units.get(contact.target) else {
                 continue;
             };
-
-            if target_allegiance.side == player_side {
-                continue;
-            }
 
             knowledge.upsert_report(KnownUnit {
                 entity: contact.target,
@@ -141,6 +132,22 @@ fn update_player_tactical_knowledge(
                 last_reported_tick: clock.tick,
             });
         }
+    }
+
+    // Then write direct reports for units in the comms graph. These are authoritative for
+    // friendlies the player can currently communicate with.
+    for entity in &reachable {
+        let Ok((_, position, allegiance, _, _)) = units.get(*entity) else {
+            continue;
+        };
+
+        knowledge.upsert_report(KnownUnit {
+            entity: *entity,
+            side: allegiance.side,
+            last_known_position_m: position.0,
+            last_observed_tick: clock.tick,
+            last_reported_tick: clock.tick,
+        });
     }
 }
 

@@ -1,7 +1,9 @@
 #![doc = include_str!("../../../docs/gameplay/rendering/overlays.md")]
 
 use crate::GameState;
-use crate::ai::perception::{EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight};
+use crate::ai::perception::{
+    ContactType, EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight,
+};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
@@ -35,8 +37,6 @@ const SENSOR_CONE_SEGMENTS: usize = 48;
 const SENSOR_VISIBILITY_STEP_METERS: f32 = 2.0;
 const ORDER_DESTINATION_RADIUS: f32 = 4.0;
 const CONTACT_BOX_SIZE: f32 = 24.0;
-const ACTIVE_CONTACT_COLOR: Color = Color::srgb(1.0, 0.9, 0.0);
-const STALE_CONTACT_COLOR: Color = Color::srgb(0.55, 0.45, 0.0);
 
 fn draw_selected_unit_sensor_cone(
     selected: Res<SelectedUnit>,
@@ -228,10 +228,12 @@ fn draw_selected_unit_contacts(
         } else {
             contact.last_seen_position_m
         };
-        let color = contact_color(actively_tracked);
+        let color = contact_color(contact.contact_type, actively_tracked);
 
         let endpoint = endpoint_m.map(meters);
-        gizmos.line_2d(start, endpoint, color);
+        if contact.contact_type == ContactType::Hostile {
+            gizmos.line_2d(start, endpoint, color);
+        }
         gizmos.rect_2d(
             Isometry2d::from_translation(endpoint),
             Vec2::splat(CONTACT_BOX_SIZE),
@@ -319,11 +321,14 @@ fn draw_selected_unit_comms(
     }
 }
 
-fn contact_color(actively_tracked: bool) -> Color {
-    if actively_tracked {
-        ACTIVE_CONTACT_COLOR
-    } else {
-        STALE_CONTACT_COLOR
+fn contact_color(contact_type: ContactType, actively_tracked: bool) -> Color {
+    let alpha = if actively_tracked { 1.0 } else { 0.55 };
+
+    match contact_type {
+        ContactType::Friendly => Color::srgba(0.0, 0.85, 1.0, alpha),
+        ContactType::Hostile => Color::srgba(1.0, 0.9, 0.0, alpha),
+        ContactType::Neutral => Color::srgba(0.85, 0.85, 0.85, alpha),
+        ContactType::Unknown => Color::srgba(1.0, 0.9, 0.0, alpha),
     }
 }
 
@@ -342,7 +347,7 @@ fn draw_enemy_contact_boxes(
         gizmos.rect_2d(
             Isometry2d::from_translation(unit.last_known_position_m.map(meters)),
             Vec2::splat(CONTACT_BOX_SIZE),
-            contact_color(actively_tracked),
+            contact_color(ContactType::Hostile, actively_tracked),
         );
     }
 }

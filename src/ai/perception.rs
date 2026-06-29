@@ -89,6 +89,7 @@ pub struct Contact {
     pub last_seen_tick: u64,
     pub confidence: f32,
     pub kind: ContactKind,
+    pub contact_type: ContactType,
 }
 
 #[allow(dead_code)]
@@ -97,6 +98,15 @@ pub enum ContactKind {
     Visual,
     Audio,
     Radar,
+    Unknown,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactType {
+    Friendly,
+    Hostile,
+    Neutral,
     Unknown,
 }
 
@@ -139,7 +149,7 @@ pub fn update_visual_perception(
         let observer_position_m = observer_position.0;
 
         for (target, target_position, target_eye_height, signature, target_allegiance) in &targets {
-            if target == observer || target_allegiance.side == observer_allegiance.side {
+            if target == observer {
                 continue;
             }
 
@@ -180,6 +190,11 @@ pub fn update_visual_perception(
                     last_seen_tick: clock.tick,
                     confidence: signature.visual.clamp(0.0, 1.0),
                     kind: ContactKind::Visual,
+                    contact_type: if target_allegiance.side == observer_allegiance.side {
+                        ContactType::Friendly
+                    } else {
+                        ContactType::Hostile
+                    },
                 },
             );
         }
