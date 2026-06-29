@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/player/selection.md")]
+
 use crate::GameState;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};

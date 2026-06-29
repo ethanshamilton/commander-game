@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/commander.md")]
+
 mod actions;
 mod ai;
 mod gameplay;

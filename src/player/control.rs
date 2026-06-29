@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/player/control.md")]
+
 use crate::units::Side;
 use bevy::prelude::*;
 

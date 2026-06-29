@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/screens/settings.md")]
+
 use bevy::prelude::*;
 
 pub struct SettingsScreenPlugin;

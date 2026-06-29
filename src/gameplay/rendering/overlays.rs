@@ -1,3 +1,5 @@
+#![doc = include_str!("../../../docs/gameplay/rendering/overlays.md")]
+
 use crate::GameState;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};

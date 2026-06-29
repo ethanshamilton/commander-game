@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/screens/mission.md")]
+
 use crate::actions::*;
 use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};

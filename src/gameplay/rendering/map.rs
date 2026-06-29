@@ -1,3 +1,5 @@
+#![doc = include_str!("../../../docs/gameplay/rendering/map.md")]
+
 use crate::GameState;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::meters;

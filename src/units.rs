@@ -1,3 +1,4 @@
+#![doc = include_str!("../docs/units.md")]
 #![allow(dead_code)] // allow temporarily while sketching
 use bevy::prelude::*;
 

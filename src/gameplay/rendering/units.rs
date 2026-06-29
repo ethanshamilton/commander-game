@@ -1,3 +1,5 @@
+#![doc = include_str!("../../../docs/gameplay/rendering/units.md")]
+
 use crate::GameState;
 use crate::gameplay::components::Heading;
 use crate::gameplay::measurements::meters;

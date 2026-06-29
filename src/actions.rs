@@ -1,3 +1,4 @@
+#![doc = include_str!("../docs/actions.md")]
 #![allow(dead_code)] // allow temporarily while sketching
 
 use crate::screens::mission;

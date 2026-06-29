@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/player.md")]
+
 pub mod control;
 pub mod knowledge;
 pub mod selection;

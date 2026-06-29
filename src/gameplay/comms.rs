@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/comms.md")]
+
 use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::simulation::SimulationSet;
 use crate::units::{Allegiance, Soldier};

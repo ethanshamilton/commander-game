@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/measurements.md")]
+
 pub const BEVY_UNITS_PER_METER: f32 = 10.0;
 
 pub const fn meters(value: f32) -> f32 {

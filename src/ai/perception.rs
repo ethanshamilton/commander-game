@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/ai/perception.md")]
+
 use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;

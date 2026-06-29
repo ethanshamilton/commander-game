@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/simulation.md")]
+
 use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::units::{Mobility, Soldier};

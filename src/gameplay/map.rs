@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/map.md")]
+
 use crate::gameplay::measurements::meters;
 use crate::gameplay::terrain::TerrainDefinition;
 use crate::maps::MapDefinition;

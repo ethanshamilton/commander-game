@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/missions.md")]
+
 use crate::maps::{DEMO_MAP, MapDefinition};
 use crate::units::{Rank, Role, Side};
 

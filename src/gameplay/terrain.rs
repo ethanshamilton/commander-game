@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/terrain.md")]
+
 use bevy::prelude::*;
 
 pub trait TerrainHeight {

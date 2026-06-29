@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/components.md")]
+
 use bevy::prelude::*;
 
 /// Simulation-space location on the tactical battlefield, stored in meters.

@@ -1,3 +1,5 @@
+#![doc = include_str!("../docs/maps.md")]
+
 use crate::gameplay::terrain::{HeightMap, TerrainDefinition};
 use bevy::prelude::*;
 

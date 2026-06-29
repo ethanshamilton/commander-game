@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/player/knowledge.md")]
+
 use crate::GameState;
 use crate::ai::perception::PerceptionMemory;
 use crate::gameplay::comms::CommsLinks;

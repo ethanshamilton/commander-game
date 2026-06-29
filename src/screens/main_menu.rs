@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/screens/main_menu.md")]
+
 use bevy::prelude::*;
 
 pub struct MainMenuScreenPlugin;

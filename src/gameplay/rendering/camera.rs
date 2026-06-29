@@ -1,3 +1,5 @@
+#![doc = include_str!("../../../docs/gameplay/rendering/camera.md")]
+
 use crate::GameState;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;

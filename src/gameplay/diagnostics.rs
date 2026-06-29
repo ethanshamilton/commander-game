@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay/diagnostics.md")]
+
 use crate::GameState;
 use crate::gameplay::simulation::{SimulationSet, simulation_running};
 use bevy::prelude::*;

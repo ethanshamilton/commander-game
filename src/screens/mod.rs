@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/screens.md")]
+
 pub mod main_menu;
 pub mod mission;
 pub mod settings;

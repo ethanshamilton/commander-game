@@ -1,3 +1,5 @@
+#![doc = include_str!("../../docs/gameplay.md")]
+
 pub mod comms;
 pub mod components;
 pub mod diagnostics;

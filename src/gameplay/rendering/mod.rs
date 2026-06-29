@@ -1,3 +1,5 @@
+#![doc = include_str!("../../../docs/gameplay/rendering.md")]
+
 mod camera;
 mod map;
 mod overlays;
