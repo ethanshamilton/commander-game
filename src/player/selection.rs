@@ -1,10 +1,11 @@
 #![doc = include_str!("../../docs/player/selection.md")]
 
 use crate::GameState;
+use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
-use crate::player::knowledge::PlayerTacticalKnowledge;
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::units::{Allegiance, Soldier};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -34,6 +35,8 @@ fn select_unit(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    control: Res<PlayerControl>,
+    clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
     mut selected: ResMut<SelectedUnit>,
 ) {
@@ -69,6 +72,7 @@ fn select_unit(
     selected.entity = knowledge
         .units
         .iter()
+        .filter(|unit| unit.side != control.side || unit.last_reported_tick == clock.tick)
         .filter_map(|unit| {
             let distance = unit
                 .last_known_position_m
@@ -89,6 +93,8 @@ fn issue_move_order(
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
+    graph: Res<CommsGraph>,
+    controlled: Query<Entity, With<PlayerControlledUnit>>,
     units: Query<&Allegiance, With<Soldier>>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Right) {
@@ -106,6 +112,16 @@ fn issue_move_order(
     if allegiance.side != control.side || !knowledge.is_current(entity, clock.tick) {
         return;
     };
+
+    let Ok(controlled_entity) = controlled.single() else {
+        return;
+    };
+
+    if !graph.can_reach(controlled_entity, entity, control.side, |entity| {
+        units.get(entity).ok().map(|allegiance| allegiance.side)
+    }) {
+        return;
+    }
 
     let Ok(window) = windows.single() else {
         return;

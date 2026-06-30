@@ -1,32 +1,26 @@
 #![doc = include_str!("../../docs/gameplay/comms.md")]
 
-use crate::gameplay::components::BattlefieldPosition;
-use crate::gameplay::simulation::SimulationSet;
-use crate::units::{Allegiance, Soldier};
+use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
+use crate::gameplay::simulation::{SimulationClock, SimulationSet};
+use crate::units::{Allegiance, Side, Soldier};
 use bevy::prelude::*;
-
-pub const DEFAULT_VOICE_COMMS_RANGE_M: f32 = 40.0;
+use std::collections::{HashMap, HashSet};
 
 pub struct CommsPlugin;
 
 impl Plugin for CommsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, update_voice_comms.in_set(SimulationSet::Comms));
+        app.init_resource::<CommsGraph>().add_systems(
+            FixedUpdate,
+            (update_voice_comms, update_comms_graph)
+                .chain()
+                .in_set(SimulationSet::Comms),
+        );
     }
 }
 
-#[derive(Component, Debug, Clone, Copy)]
-pub struct VoiceComms {
-    pub range_m: f32,
-}
-
-impl Default for VoiceComms {
-    fn default() -> Self {
-        Self {
-            range_m: DEFAULT_VOICE_COMMS_RANGE_M,
-        }
-    }
-}
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct VoiceComms;
 
 #[derive(Component, Debug, Default)]
 pub struct CommsLinks {
@@ -45,33 +39,79 @@ pub enum CommsKind {
     Voice,
 }
 
+#[derive(Resource, Debug, Default)]
+pub struct CommsGraph {
+    adjacency: HashMap<Entity, Vec<CommsLink>>,
+}
+
+impl CommsGraph {
+    pub fn reachable_from(
+        &self,
+        root: Entity,
+        side: Side,
+        mut side_of: impl FnMut(Entity) -> Option<Side>,
+    ) -> HashSet<Entity> {
+        let mut reachable = HashSet::new();
+        let mut frontier = vec![root];
+
+        while let Some(entity) = frontier.pop() {
+            if !reachable.insert(entity) {
+                continue;
+            }
+
+            if side_of(entity) != Some(side) {
+                continue;
+            }
+
+            let Some(links) = self.adjacency.get(&entity) else {
+                continue;
+            };
+
+            for link in links {
+                if !reachable.contains(&link.target) {
+                    frontier.push(link.target);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    pub fn can_reach(
+        &self,
+        root: Entity,
+        target: Entity,
+        side: Side,
+        side_of: impl FnMut(Entity) -> Option<Side>,
+    ) -> bool {
+        self.reachable_from(root, side, side_of).contains(&target)
+    }
+
+    pub fn links_from(&self, entity: Entity) -> Option<&[CommsLink]> {
+        self.adjacency.get(&entity).map(Vec::as_slice)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
-struct CommsSnapshot {
+struct CommsSnapshot<'a> {
     entity: Entity,
-    position_m: Vec2,
     side: crate::units::Side,
     voice: Option<VoiceComms>,
+    memory: &'a PerceptionMemory,
 }
 
 fn update_voice_comms(
-    snapshots: Query<
-        (
-            Entity,
-            &BattlefieldPosition,
-            &Allegiance,
-            Option<&VoiceComms>,
-        ),
-        With<Soldier>,
-    >,
+    clock: Res<SimulationClock>,
+    snapshots: Query<(Entity, &Allegiance, Option<&VoiceComms>, &PerceptionMemory), With<Soldier>>,
     mut links_query: Query<&mut CommsLinks, With<Soldier>>,
 ) {
     let snapshots: Vec<CommsSnapshot> = snapshots
         .iter()
-        .map(|(entity, position, allegiance, voice)| CommsSnapshot {
+        .map(|(entity, allegiance, voice, memory)| CommsSnapshot {
             entity,
-            position_m: position.0,
             side: allegiance.side,
             voice: voice.copied(),
+            memory,
         })
         .collect();
 
@@ -80,7 +120,7 @@ fn update_voice_comms(
     }
 
     for source in &snapshots {
-        let Some(voice) = source.voice else {
+        if source.voice.is_none() {
             continue;
         };
 
@@ -88,19 +128,40 @@ fn update_voice_comms(
             continue;
         };
 
-        let range_sq = voice.range_m * voice.range_m;
-
-        for target in &snapshots {
-            if source.entity == target.entity || source.side != target.side {
+        for contact in &source.memory.contacts {
+            if contact.last_seen_tick != clock.tick
+                || contact.kind != ContactKind::Auditory
+                || contact.contact_type != ContactType::Friendly
+            {
                 continue;
             }
 
-            if source.position_m.distance_squared(target.position_m) <= range_sq {
-                links.links.push(CommsLink {
-                    target: target.entity,
-                    kind: CommsKind::Voice,
-                });
+            let Some(target) = snapshots
+                .iter()
+                .find(|target| target.entity == contact.target)
+            else {
+                continue;
+            };
+
+            if target.side != source.side || target.voice.is_none() {
+                continue;
             }
+
+            links.links.push(CommsLink {
+                target: target.entity,
+                kind: CommsKind::Voice,
+            });
         }
+    }
+}
+
+fn update_comms_graph(
+    links_query: Query<(Entity, &CommsLinks), With<Soldier>>,
+    mut graph: ResMut<CommsGraph>,
+) {
+    graph.adjacency.clear();
+
+    for (entity, links) in &links_query {
+        graph.adjacency.insert(entity, links.links.clone());
     }
 }

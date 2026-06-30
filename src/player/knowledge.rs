@@ -2,12 +2,11 @@
 
 use crate::GameState;
 use crate::ai::perception::PerceptionMemory;
-use crate::gameplay::comms::CommsLinks;
+use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::units::{Allegiance, Side, Soldier};
 use bevy::prelude::*;
-use std::collections::HashSet;
 
 pub struct PlayerKnowledgePlugin;
 
@@ -71,12 +70,12 @@ pub struct KnownUnit {
 fn update_player_tactical_knowledge(
     clock: Res<SimulationClock>,
     controlled: Query<Entity, With<PlayerControlledUnit>>,
+    graph: Res<CommsGraph>,
     units: Query<
         (
             Entity,
             &BattlefieldPosition,
             &Allegiance,
-            &CommsLinks,
             Option<&PerceptionMemory>,
         ),
         With<Soldier>,
@@ -88,26 +87,23 @@ fn update_player_tactical_knowledge(
         return;
     };
 
-    let Ok((_, _, controlled_allegiance, _, _)) = units.get(controlled_entity) else {
+    let Ok((_, _, controlled_allegiance, _)) = units.get(controlled_entity) else {
         return;
     };
     let player_side = controlled_allegiance.side;
 
-    let reachable = reachable_friendly_units(controlled_entity, player_side, |entity| {
-        let Ok((_, _, allegiance, comms, _)) = units.get(entity) else {
-            return None;
-        };
-        Some((
-            allegiance.side,
-            comms.links.iter().map(|link| link.target).collect(),
-        ))
+    let reachable = graph.reachable_from(controlled_entity, player_side, |entity| {
+        units
+            .get(entity)
+            .ok()
+            .map(|(_, _, allegiance, _)| allegiance.side)
     });
 
     // First fold in sensor contacts from reachable friendly units. These reports may include
     // friendlies outside the comms graph, but they should not override direct position reports
     // for units that are already reachable through comms.
     for entity in &reachable {
-        let Ok((_, _, _, _, memory)) = units.get(*entity) else {
+        let Ok((_, _, _, memory)) = units.get(*entity) else {
             continue;
         };
 
@@ -116,6 +112,10 @@ fn update_player_tactical_knowledge(
         };
 
         for contact in &memory.contacts {
+            if contact.last_seen_tick != clock.tick {
+                continue;
+            }
+
             let Ok((target_position, target_allegiance)) = target_units.get(contact.target) else {
                 continue;
             };
@@ -137,7 +137,7 @@ fn update_player_tactical_knowledge(
     // Then write direct reports for units in the comms graph. These are authoritative for
     // friendlies the player can currently communicate with.
     for entity in &reachable {
-        let Ok((_, position, allegiance, _, _)) = units.get(*entity) else {
+        let Ok((_, position, allegiance, _)) = units.get(*entity) else {
             continue;
         };
 
@@ -149,35 +149,4 @@ fn update_player_tactical_knowledge(
             last_reported_tick: clock.tick,
         });
     }
-}
-
-pub fn reachable_friendly_units(
-    root: Entity,
-    side: Side,
-    mut unit_links: impl FnMut(Entity) -> Option<(Side, Vec<Entity>)>,
-) -> HashSet<Entity> {
-    let mut reachable = HashSet::new();
-    let mut frontier = vec![root];
-
-    while let Some(entity) = frontier.pop() {
-        if !reachable.insert(entity) {
-            continue;
-        }
-
-        let Some((unit_side, links)) = unit_links(entity) else {
-            continue;
-        };
-
-        if unit_side != side {
-            continue;
-        }
-
-        for target in links {
-            if !reachable.contains(&target) {
-                frontier.push(target);
-            }
-        }
-    }
-
-    reachable
 }

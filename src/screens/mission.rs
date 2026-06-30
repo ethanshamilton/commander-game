@@ -1,7 +1,9 @@
 #![doc = include_str!("../../docs/screens/mission.md")]
 
 use crate::actions::*;
-use crate::ai::perception::{EyeHeight, PerceptionMemory, SensorSignature, VisualSensor};
+use crate::ai::perception::{
+    AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
+};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::diagnostics::SimulationPerf;
@@ -568,6 +570,7 @@ pub fn spawn_soldier_at(
             BattlefieldPosition(position),
             Heading(heading_radians),
             VisualSensor::default(),
+            AuditorySensor::default(),
             EyeHeight::default(),
             SensorSignature::default(),
             PerceptionMemory::default(),

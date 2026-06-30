@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 const DEFAULT_VISUAL_RANGE_M: f32 = 150.0;
 const DEFAULT_VISUAL_FOV_RADIANS: f32 = std::f32::consts::PI;
+const DEFAULT_AUDITORY_RANGE_M: f32 = 40.0;
 const DEFAULT_EYE_HEIGHT_M: f32 = 1.7;
 const LOS_SAMPLE_SPACING_M: f32 = 2.0;
 const LOS_TERRAIN_CLEARANCE_M: f32 = 0.1;
@@ -20,7 +21,7 @@ impl Plugin for PerceptionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             FixedUpdate,
-            update_visual_perception
+            (update_visual_perception, update_auditory_perception)
                 .in_set(SimulationSet::Sensors)
                 .run_if(in_state(GameState::MissionScreen)),
         );
@@ -38,6 +39,19 @@ impl Default for VisualSensor {
         Self {
             range_m: DEFAULT_VISUAL_RANGE_M,
             fov_radians: DEFAULT_VISUAL_FOV_RADIANS,
+        }
+    }
+}
+
+#[derive(Component, Debug, Clone, Copy)]
+pub struct AuditorySensor {
+    pub range_m: f32,
+}
+
+impl Default for AuditorySensor {
+    fn default() -> Self {
+        Self {
+            range_m: DEFAULT_AUDITORY_RANGE_M,
         }
     }
 }
@@ -96,7 +110,7 @@ pub struct Contact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContactKind {
     Visual,
-    Audio,
+    Auditory,
     Radar,
     Unknown,
 }
@@ -190,6 +204,59 @@ pub fn update_visual_perception(
                     last_seen_tick: clock.tick,
                     confidence: signature.visual.clamp(0.0, 1.0),
                     kind: ContactKind::Visual,
+                    contact_type: if target_allegiance.side == observer_allegiance.side {
+                        ContactType::Friendly
+                    } else {
+                        ContactType::Hostile
+                    },
+                },
+            );
+        }
+    }
+}
+
+pub fn update_auditory_perception(
+    clock: Res<SimulationClock>,
+    mut observers: Query<
+        (
+            Entity,
+            &BattlefieldPosition,
+            &AuditorySensor,
+            &Allegiance,
+            &mut PerceptionMemory,
+        ),
+        With<Soldier>,
+    >,
+    targets: Query<(Entity, &BattlefieldPosition, &SensorSignature, &Allegiance), With<Soldier>>,
+) {
+    for (observer, observer_position, auditory_sensor, observer_allegiance, mut memory) in
+        &mut observers
+    {
+        let observer_position_m = observer_position.0;
+
+        for (target, target_position, signature, target_allegiance) in &targets {
+            if target == observer || signature.acoustic <= 0.0 {
+                continue;
+            }
+
+            let effective_range_m = auditory_sensor.range_m * signature.acoustic;
+            let target_position_m = target_position.0;
+
+            if observer_position_m.distance_squared(target_position_m)
+                > effective_range_m * effective_range_m
+            {
+                continue;
+            }
+
+            upsert_contact(
+                &mut memory,
+                Contact {
+                    target,
+                    last_seen_position_m: target_position_m,
+                    last_seen_time_s: clock.elapsed_s,
+                    last_seen_tick: clock.tick,
+                    confidence: signature.acoustic.clamp(0.0, 1.0),
+                    kind: ContactKind::Auditory,
                     contact_type: if target_allegiance.side == observer_allegiance.side {
                         ContactType::Friendly
                     } else {

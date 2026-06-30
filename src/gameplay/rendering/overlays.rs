@@ -2,15 +2,16 @@
 
 use crate::GameState;
 use crate::ai::perception::{
-    ContactType, EyeHeight, PerceptionMemory, VisualSensor, has_line_of_sight,
+    AuditorySensor, Contact, ContactType, EyeHeight, PerceptionMemory, VisualSensor,
+    has_line_of_sight,
 };
-use crate::gameplay::comms::{CommsLinks, VoiceComms};
+use crate::gameplay::comms::{CommsGraph, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::{PlayerControl, UnitIntelAccess};
-use crate::player::knowledge::{PlayerTacticalKnowledge, reachable_friendly_units};
+use crate::player::knowledge::PlayerTacticalKnowledge;
 use crate::player::selection::SelectedUnit;
 use crate::units::{Allegiance, Soldier};
 use bevy::prelude::*;
@@ -218,7 +219,7 @@ fn draw_selected_unit_contacts(
 
     let start = position.0.map(meters);
 
-    for contact in &memory.contacts {
+    for contact in latest_contacts_by_target(&memory.contacts) {
         let actively_tracked = contact.last_seen_tick == clock.tick;
         let endpoint_m = if actively_tracked {
             targets
@@ -242,17 +243,35 @@ fn draw_selected_unit_contacts(
     }
 }
 
+fn latest_contacts_by_target(contacts: &[Contact]) -> Vec<&Contact> {
+    let mut latest = std::collections::HashMap::new();
+
+    for contact in contacts {
+        latest
+            .entry(contact.target)
+            .and_modify(|existing: &mut &Contact| {
+                if contact.last_seen_tick > existing.last_seen_tick {
+                    *existing = contact;
+                }
+            })
+            .or_insert(contact);
+    }
+
+    latest.into_values().collect()
+}
+
 fn draw_selected_unit_comms(
     selected: Res<SelectedUnit>,
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
+    graph: Res<CommsGraph>,
     units: Query<
         (
             &BattlefieldPosition,
             &Allegiance,
-            &CommsLinks,
             Option<&VoiceComms>,
+            Option<&AuditorySensor>,
         ),
         With<Soldier>,
     >,
@@ -262,7 +281,7 @@ fn draw_selected_unit_comms(
         return;
     };
 
-    let Ok((selected_position, selected_allegiance, _, selected_voice)) =
+    let Ok((selected_position, selected_allegiance, selected_voice, selected_auditory)) =
         units.get(selected_entity)
     else {
         return;
@@ -277,30 +296,31 @@ fn draw_selected_unit_comms(
     let color = Color::srgba(0.78, 0.55, 1.0, 0.75);
     let selected_position = selected_position.0.map(meters);
 
-    if let Some(voice) = selected_voice {
+    if let (Some(_voice), Some(auditory)) = (selected_voice, selected_auditory) {
         gizmos
-            .circle_2d(selected_position, meters(voice.range_m), color)
+            .circle_2d(selected_position, meters(auditory.range_m), color)
             .resolution(64);
     }
 
-    let reachable = reachable_friendly_units(selected_entity, control.side, |entity| {
-        let Ok((_, allegiance, comms, _)) = units.get(entity) else {
-            return None;
-        };
-        Some((
-            allegiance.side,
-            comms.links.iter().map(|link| link.target).collect(),
-        ))
+    let reachable = graph.reachable_from(selected_entity, control.side, |entity| {
+        units
+            .get(entity)
+            .ok()
+            .map(|(_, allegiance, _, _)| allegiance.side)
     });
 
     let mut drawn_edges = std::collections::HashSet::new();
 
     for source in &reachable {
-        let Ok((source_position, _, comms, _)) = units.get(*source) else {
+        let Ok((source_position, _, _, _)) = units.get(*source) else {
             continue;
         };
 
-        for link in &comms.links {
+        let Some(links) = graph.links_from(*source) else {
+            continue;
+        };
+
+        for link in links {
             if !reachable.contains(&link.target)
                 || drawn_edges.contains(&(link.target, *source))
                 || !drawn_edges.insert((*source, link.target))

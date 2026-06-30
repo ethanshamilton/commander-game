@@ -46,7 +46,7 @@ fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
     );
 }
 
-const TOPOGRAPHY_SAMPLE_SPACING_METERS: f32 = 5.0;
+const TOPOGRAPHY_SAMPLE_SPACING_METERS: f32 = 2.5;
 const CONTOUR_INTERVAL_METERS: f32 = 2.0;
 const MAX_CONTOUR_HEIGHT_METERS: f32 = 20.0;
 
