@@ -5,7 +5,8 @@ use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::terrain::TerrainHeight;
-use crate::units::{Alive, Allegiance, Soldier};
+use crate::player::knowledge::ReportedLifeStatus;
+use crate::units::{Alive, Allegiance, Dead, Soldier};
 use bevy::prelude::*;
 
 const DEFAULT_VISUAL_RANGE_M: f32 = 150.0;
@@ -102,6 +103,7 @@ pub struct Contact {
     pub last_seen_time_s: f32,
     pub last_seen_tick: u64,
     pub confidence: f32,
+    pub observed_life_status: ReportedLifeStatus,
     pub kind: ContactKind,
     pub contact_type: ContactType,
 }
@@ -146,6 +148,7 @@ pub fn update_visual_perception(
             Option<&EyeHeight>,
             &SensorSignature,
             &Allegiance,
+            Option<&Dead>,
         ),
         With<Soldier>,
     >,
@@ -162,7 +165,15 @@ pub fn update_visual_perception(
     {
         let observer_position_m = observer_position.0;
 
-        for (target, target_position, target_eye_height, signature, target_allegiance) in &targets {
+        for (
+            target,
+            target_position,
+            target_eye_height,
+            signature,
+            target_allegiance,
+            target_dead,
+        ) in &targets
+        {
             if target == observer {
                 continue;
             }
@@ -203,6 +214,11 @@ pub fn update_visual_perception(
                     last_seen_time_s: clock.elapsed_s,
                     last_seen_tick: clock.tick,
                     confidence: signature.visual.clamp(0.0, 1.0),
+                    observed_life_status: if target_dead.is_some() {
+                        ReportedLifeStatus::Dead
+                    } else {
+                        ReportedLifeStatus::Alive
+                    },
                     kind: ContactKind::Visual,
                     contact_type: if target_allegiance.side == observer_allegiance.side {
                         ContactType::Friendly
@@ -227,15 +243,24 @@ pub fn update_auditory_perception(
         ),
         (With<Soldier>, With<Alive>),
     >,
-    targets: Query<(Entity, &BattlefieldPosition, &SensorSignature, &Allegiance), With<Soldier>>,
+    targets: Query<
+        (
+            Entity,
+            &BattlefieldPosition,
+            &SensorSignature,
+            &Allegiance,
+            Option<&Dead>,
+        ),
+        With<Soldier>,
+    >,
 ) {
     for (observer, observer_position, auditory_sensor, observer_allegiance, mut memory) in
         &mut observers
     {
         let observer_position_m = observer_position.0;
 
-        for (target, target_position, signature, target_allegiance) in &targets {
-            if target == observer || signature.acoustic <= 0.0 {
+        for (target, target_position, signature, target_allegiance, target_dead) in &targets {
+            if target == observer || target_dead.is_some() || signature.acoustic <= 0.0 {
                 continue;
             }
 
@@ -256,6 +281,7 @@ pub fn update_auditory_perception(
                     last_seen_time_s: clock.elapsed_s,
                     last_seen_tick: clock.tick,
                     confidence: signature.acoustic.clamp(0.0, 1.0),
+                    observed_life_status: ReportedLifeStatus::Alive,
                     kind: ContactKind::Auditory,
                     contact_type: if target_allegiance.side == observer_allegiance.side {
                         ContactType::Friendly

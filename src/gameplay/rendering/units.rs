@@ -6,9 +6,9 @@ use crate::gameplay::components::Heading;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::SimulationClock;
 use crate::player::control::PlayerControl;
-use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportedLifeStatus};
 use crate::player::selection::SelectedUnit;
-use crate::units::{Allegiance, Dead, Side, Soldier};
+use crate::units::{Allegiance, Side, Soldier};
 use bevy::prelude::*;
 
 pub struct UnitRenderingPlugin;
@@ -40,13 +40,12 @@ fn draw_units(
             Option<&Heading>,
             &Allegiance,
             Option<&PlayerControlledUnit>,
-            Option<&Dead>,
         ),
         With<Soldier>,
     >,
     mut gizmos: Gizmos,
 ) {
-    for (entity, heading, allegiance, player_controlled, dead) in &units {
+    for (entity, heading, allegiance, player_controlled) in &units {
         let Some(known) = knowledge.get(entity) else {
             continue;
         };
@@ -56,10 +55,16 @@ fn draw_units(
         let p = known.last_known_position_m.map(meters);
 
         if allegiance.side == control.side && !currently_reported {
+            let color = if known.reported_life_status == ReportedLifeStatus::Dead {
+                Color::srgba(0.55, 0.55, 0.55, 0.75)
+            } else {
+                Color::srgba(0.45, 0.85, 1.0, 0.75)
+            };
+
             gizmos.rect_2d(
                 Isometry2d::from_translation(p),
                 Vec2::splat(CONTACT_BOX_SIZE),
-                Color::srgba(0.45, 0.85, 1.0, 0.75),
+                color,
             );
             continue;
         }
@@ -68,7 +73,7 @@ fn draw_units(
             continue;
         }
 
-        let color = if dead.is_some() {
+        let color = if known.reported_life_status == ReportedLifeStatus::Dead {
             Color::srgb(0.55, 0.55, 0.55)
         } else {
             match allegiance.side {

@@ -60,11 +60,20 @@ impl PlayerTacticalKnowledge {
 pub struct KnownUnit {
     pub entity: Entity,
     pub side: Side,
+    pub reported_life_status: ReportedLifeStatus,
     pub last_known_position_m: Vec2,
     /// Tick when this unit/contact was physically observed by the reporting unit.
     pub last_observed_tick: u64,
     /// Tick when the player received or refreshed the report through comms.
     pub last_reported_tick: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportedLifeStatus {
+    Alive,
+    Dead,
+    Unknown,
 }
 
 fn update_player_tactical_knowledge(
@@ -123,6 +132,7 @@ fn update_player_tactical_knowledge(
             knowledge.upsert_report(KnownUnit {
                 entity: contact.target,
                 side: target_allegiance.side,
+                reported_life_status: contact.observed_life_status,
                 last_known_position_m: if contact.last_seen_tick == clock.tick {
                     target_position.0
                 } else {
@@ -144,6 +154,7 @@ fn update_player_tactical_knowledge(
         knowledge.upsert_report(KnownUnit {
             entity: *entity,
             side: allegiance.side,
+            reported_life_status: ReportedLifeStatus::Alive,
             last_known_position_m: position.0,
             last_observed_tick: clock.tick,
             last_reported_tick: clock.tick,
