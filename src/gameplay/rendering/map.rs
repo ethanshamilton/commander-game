@@ -1,5 +1,6 @@
 #![doc = include_str!("../../../docs/gameplay/rendering/map.md")]
 
+use super::RenderingSet;
 use crate::GameState;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::meters;
@@ -12,15 +13,18 @@ impl Plugin for MapRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (draw_battlefield_grid, draw_topography).run_if(in_state(GameState::MissionScreen)),
+            (draw_battlefield_grid, draw_topography)
+                .chain()
+                .in_set(RenderingSet::Map)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
 
 fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
-    let grid_color = Color::srgba(0.0, 0.8, 0.25, 0.18);
-    let border_color = Color::srgba(0.0, 1.0, 0.35, 0.55);
-    let axis_color = Color::srgba(0.0, 1.0, 0.35, 0.35);
+    let grid_color = Color::srgb(0.16, 0.16, 0.16);
+    let border_color = Color::srgb(0.28, 0.28, 0.28);
+    let axis_color = Color::srgb(0.22, 0.22, 0.22);
 
     gizmos
         .grid_2d(
@@ -51,7 +55,7 @@ const CONTOUR_INTERVAL_METERS: f32 = 2.0;
 const MAX_CONTOUR_HEIGHT_METERS: f32 = 20.0;
 
 fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
-    let contour_color = Color::srgba(0.78, 0.78, 0.78, 0.45);
+    let contour_color = Color::srgb(0.72, 0.72, 0.72);
     let min_m = -map.size_m / 2.0;
     let cells = (map.size_m / TOPOGRAPHY_SAMPLE_SPACING_METERS).as_uvec2();
 

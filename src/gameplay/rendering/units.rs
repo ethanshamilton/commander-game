@@ -1,5 +1,6 @@
 #![doc = include_str!("../../../docs/gameplay/rendering/units.md")]
 
+use super::RenderingSet;
 use crate::GameState;
 use crate::gameplay::components::Heading;
 use crate::gameplay::measurements::meters;
@@ -16,7 +17,9 @@ impl Plugin for UnitRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            draw_units.run_if(in_state(GameState::MissionScreen)),
+            draw_units
+                .in_set(RenderingSet::Units)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

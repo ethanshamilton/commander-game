@@ -9,11 +9,27 @@ use crate::gameplay::map::BattlefieldMap;
 use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore};
 use bevy::prelude::*;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderingSet {
+    Map,
+    Units,
+    Overlays,
+}
+
 pub struct GameplayRenderingPlugin;
 
 impl Plugin for GameplayRenderingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattlefieldMap>()
+            .configure_sets(
+                Update,
+                (
+                    RenderingSet::Map,
+                    RenderingSet::Units,
+                    RenderingSet::Overlays,
+                )
+                    .chain(),
+            )
             .add_systems(Startup, configure_gizmos)
             .add_plugins((
                 camera::BattlefieldCameraPlugin,
