@@ -15,7 +15,7 @@ use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::{PlayerControl, UnitIntelAccess};
 use crate::player::knowledge::PlayerTacticalKnowledge;
 use crate::player::selection::SelectedUnit;
-use crate::units::{Allegiance, Soldier};
+use crate::units::{Allegiance, Dead, Soldier};
 use bevy::prelude::*;
 
 pub struct TacticalOverlayRenderingPlugin;
@@ -214,7 +214,7 @@ fn draw_selected_unit_contacts(
         ),
         With<Soldier>,
     >,
-    targets: Query<&BattlefieldPosition, With<Soldier>>,
+    targets: Query<(&BattlefieldPosition, Option<&Dead>), With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
     let Some(entity) = selected.entity else {
@@ -237,15 +237,19 @@ fn draw_selected_unit_contacts(
 
     for contact in latest_contacts_by_target(&memory.contacts) {
         let actively_tracked = contact.last_seen_tick == clock.tick;
+        let target = targets.get(contact.target).ok();
         let endpoint_m = if actively_tracked {
-            targets
-                .get(contact.target)
-                .map(|target_position| target_position.0)
+            target
+                .map(|(target_position, _)| target_position.0)
                 .unwrap_or(contact.last_seen_position_m)
         } else {
             contact.last_seen_position_m
         };
-        let color = contact_color(contact.contact_type, actively_tracked);
+        let color = if target.is_some_and(|(_, dead)| dead.is_some()) {
+            dead_contact_color(actively_tracked)
+        } else {
+            contact_color(contact.contact_type, actively_tracked)
+        };
 
         let endpoint = endpoint_m.map(meters);
         if contact.contact_type == ContactType::Hostile {
@@ -498,6 +502,11 @@ fn side_color(side: crate::units::Side, alpha: f32) -> Color {
     }
 }
 
+fn dead_contact_color(actively_tracked: bool) -> Color {
+    let alpha = if actively_tracked { 1.0 } else { 0.55 };
+    Color::srgba(0.55, 0.55, 0.55, alpha)
+}
+
 fn contact_color(contact_type: ContactType, actively_tracked: bool) -> Color {
     let alpha = if actively_tracked { 1.0 } else { 0.55 };
 
@@ -513,6 +522,7 @@ fn draw_enemy_contact_boxes(
     clock: Res<SimulationClock>,
     control: Res<PlayerControl>,
     knowledge: Res<PlayerTacticalKnowledge>,
+    units: Query<Option<&Dead>, With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
     for unit in knowledge
@@ -521,10 +531,16 @@ fn draw_enemy_contact_boxes(
         .filter(|unit| unit.side != control.side)
     {
         let actively_tracked = unit.last_observed_tick == clock.tick;
+        let color = if units.get(unit.entity).ok().flatten().is_some() {
+            dead_contact_color(actively_tracked)
+        } else {
+            contact_color(ContactType::Hostile, actively_tracked)
+        };
+
         gizmos.rect_2d(
             Isometry2d::from_translation(unit.last_known_position_m.map(meters)),
             Vec2::splat(CONTACT_BOX_SIZE),
-            contact_color(ContactType::Hostile, actively_tracked),
+            color,
         );
     }
 }

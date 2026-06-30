@@ -16,6 +16,12 @@ pub struct SoldierBundle {
 // COMPONENTS
 
 #[derive(Component)]
+pub struct Alive;
+
+#[derive(Component)]
+pub struct Dead;
+
+#[derive(Component)]
 pub struct Allegiance {
     pub side: Side,
 }

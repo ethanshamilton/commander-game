@@ -574,6 +574,7 @@ pub fn spawn_soldier_at(
         .spawn((
             MissionEntity,
             Soldier { rank, role },
+            Alive,
             Allegiance { side },
             Health {
                 current: 100,
@@ -587,6 +588,8 @@ pub fn spawn_soldier_at(
             AuditorySensor::default(),
             EyeHeight::default(),
             SensorSignature::default(),
+        ))
+        .insert((
             PerceptionMemory::default(),
             VoiceComms::default(),
             CommsLinks::default(),

@@ -2,7 +2,7 @@
 
 use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
-use crate::units::{Allegiance, Side, Soldier};
+use crate::units::{Alive, Allegiance, Side, Soldier};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -102,8 +102,11 @@ struct CommsSnapshot<'a> {
 
 fn update_voice_comms(
     clock: Res<SimulationClock>,
-    snapshots: Query<(Entity, &Allegiance, Option<&VoiceComms>, &PerceptionMemory), With<Soldier>>,
-    mut links_query: Query<&mut CommsLinks, With<Soldier>>,
+    snapshots: Query<
+        (Entity, &Allegiance, Option<&VoiceComms>, &PerceptionMemory),
+        (With<Soldier>, With<Alive>),
+    >,
+    mut links_query: Query<&mut CommsLinks, (With<Soldier>, With<Alive>)>,
 ) {
     let snapshots: Vec<CommsSnapshot> = snapshots
         .iter()
@@ -156,7 +159,7 @@ fn update_voice_comms(
 }
 
 fn update_comms_graph(
-    links_query: Query<(Entity, &CommsLinks), With<Soldier>>,
+    links_query: Query<(Entity, &CommsLinks), (With<Soldier>, With<Alive>)>,
     mut graph: ResMut<CommsGraph>,
 ) {
     graph.adjacency.clear();

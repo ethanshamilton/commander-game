@@ -5,7 +5,7 @@ use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::terrain::TerrainHeight;
-use crate::units::{Allegiance, Soldier};
+use crate::units::{Alive, Allegiance, Soldier};
 use bevy::prelude::*;
 
 const DEFAULT_VISUAL_RANGE_M: f32 = 150.0;
@@ -137,7 +137,7 @@ pub fn update_visual_perception(
             &Allegiance,
             &mut PerceptionMemory,
         ),
-        With<Soldier>,
+        (With<Soldier>, With<Alive>),
     >,
     targets: Query<
         (
@@ -225,7 +225,7 @@ pub fn update_auditory_perception(
             &Allegiance,
             &mut PerceptionMemory,
         ),
-        With<Soldier>,
+        (With<Soldier>, With<Alive>),
     >,
     targets: Query<(Entity, &BattlefieldPosition, &SensorSignature, &Allegiance), With<Soldier>>,
 ) {

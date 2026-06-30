@@ -7,7 +7,7 @@ use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
-use crate::units::{Allegiance, Soldier};
+use crate::units::{Alive, Allegiance, Soldier};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -96,8 +96,8 @@ fn issue_move_order(
     knowledge: Res<PlayerTacticalKnowledge>,
     graph: Res<CommsGraph>,
     command_forest: Res<CommandForest>,
-    controlled: Query<Entity, With<PlayerControlledUnit>>,
-    units: Query<&Allegiance, With<Soldier>>,
+    controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
+    units: Query<&Allegiance, (With<Soldier>, With<Alive>)>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Right) {
         return;

@@ -8,7 +8,7 @@ use crate::gameplay::simulation::SimulationClock;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::SelectedUnit;
-use crate::units::{Allegiance, Side, Soldier};
+use crate::units::{Allegiance, Dead, Side, Soldier};
 use bevy::prelude::*;
 
 pub struct UnitRenderingPlugin;
@@ -40,12 +40,13 @@ fn draw_units(
             Option<&Heading>,
             &Allegiance,
             Option<&PlayerControlledUnit>,
+            Option<&Dead>,
         ),
         With<Soldier>,
     >,
     mut gizmos: Gizmos,
 ) {
-    for (entity, heading, allegiance, player_controlled) in &units {
+    for (entity, heading, allegiance, player_controlled, dead) in &units {
         let Some(known) = knowledge.get(entity) else {
             continue;
         };
@@ -67,9 +68,13 @@ fn draw_units(
             continue;
         }
 
-        let color = match allegiance.side {
-            Side::Blue => Color::srgb(0.0, 0.85, 1.0),
-            Side::Red => Color::srgb(1.0, 0.15, 0.1),
+        let color = if dead.is_some() {
+            Color::srgb(0.55, 0.55, 0.55)
+        } else {
+            match allegiance.side {
+                Side::Blue => Color::srgb(0.0, 0.85, 1.0),
+                Side::Red => Color::srgb(1.0, 0.15, 0.1),
+            }
         };
 
         let radius = 7.0;

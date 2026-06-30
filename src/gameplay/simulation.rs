@@ -2,7 +2,7 @@
 
 use crate::GameState;
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::units::{Mobility, Soldier};
+use crate::units::{Alive, Mobility, Soldier};
 use bevy::prelude::*;
 
 pub const SIMULATION_TICK_HZ: f64 = 20.0;
@@ -113,7 +113,7 @@ fn move_units(
             &Mobility,
             &UnitOrder,
         ),
-        With<Soldier>,
+        (With<Soldier>, With<Alive>),
     >,
 ) {
     let dt = clock.tick_dt_s * clock.speed;

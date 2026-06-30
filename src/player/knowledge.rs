@@ -5,7 +5,7 @@ use crate::ai::perception::PerceptionMemory;
 use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
-use crate::units::{Allegiance, Side, Soldier};
+use crate::units::{Alive, Allegiance, Side, Soldier};
 use bevy::prelude::*;
 
 pub struct PlayerKnowledgePlugin;
@@ -69,7 +69,7 @@ pub struct KnownUnit {
 
 fn update_player_tactical_knowledge(
     clock: Res<SimulationClock>,
-    controlled: Query<Entity, With<PlayerControlledUnit>>,
+    controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
     graph: Res<CommsGraph>,
     units: Query<
         (
@@ -78,7 +78,7 @@ fn update_player_tactical_knowledge(
             &Allegiance,
             Option<&PerceptionMemory>,
         ),
-        With<Soldier>,
+        (With<Soldier>, With<Alive>),
     >,
     target_units: Query<(&BattlefieldPosition, &Allegiance), With<Soldier>>,
     mut knowledge: ResMut<PlayerTacticalKnowledge>,
