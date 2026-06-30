@@ -1,4 +1,5 @@
 #![doc = include_str!("../docs/commander.md")]
+#![doc = include_str!("../docs/truth_pipeline.md")]
 
 mod actions;
 mod ai;
