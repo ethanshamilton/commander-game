@@ -18,3 +18,4 @@ Running/evergreen notes file for the project.
     - This turns out to be relatively complex in that we need a way to account for what it means to have intel be intercepted.
 
 ## NEEDS FIX
+- There are currently two notions of position, one in units.rs and the other is BattlefieldPosition. Need to reconcile.

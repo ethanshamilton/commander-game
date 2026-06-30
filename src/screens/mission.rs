@@ -4,6 +4,7 @@ use crate::actions::*;
 use crate::ai::perception::{
     AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
 };
+use crate::gameplay::command::{CommandForest, UnitIdentity};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::diagnostics::SimulationPerf;
@@ -512,6 +513,9 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     );
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
 
+    let mut entities_by_unit_id = HashMap::new();
+    let mut side_by_entity = HashMap::new();
+
     for unit in mission.units {
         let entity = spawn_soldier_at(
             commands,
@@ -522,10 +526,20 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
             unit.heading_radians,
         );
 
+        commands.entity(entity).insert(UnitIdentity { id: unit.id });
+        entities_by_unit_id.insert(unit.id, entity);
+        side_by_entity.insert(entity, unit.side);
+
         if unit.side == Side::Blue && matches!(unit.rank, Rank::Sergeant) {
             commands.entity(entity).insert(PlayerControlledUnit);
         }
     }
+
+    commands.insert_resource(CommandForest::from_assignments(
+        mission.command_assignments,
+        &entities_by_unit_id,
+        |entity| side_by_entity.get(&entity).copied(),
+    ));
 }
 
 /// Spawn a soldier entity (gameplay logic)

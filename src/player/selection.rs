@@ -1,6 +1,7 @@
 #![doc = include_str!("../../docs/player/selection.md")]
 
 use crate::GameState;
+use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
@@ -94,6 +95,7 @@ fn issue_move_order(
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
     graph: Res<CommsGraph>,
+    command_forest: Res<CommandForest>,
     controlled: Query<Entity, With<PlayerControlledUnit>>,
     units: Query<&Allegiance, With<Soldier>>,
 ) {
@@ -120,6 +122,10 @@ fn issue_move_order(
     if !graph.can_reach(controlled_entity, entity, control.side, |entity| {
         units.get(entity).ok().map(|allegiance| allegiance.side)
     }) {
+        return;
+    }
+
+    if !command_forest.can_command(controlled_entity, entity) {
         return;
     }
 
