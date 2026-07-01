@@ -367,3 +367,127 @@ fn upsert_contact(memory: &mut PerceptionMemory, contact: Contact) {
         memory.contacts.push(contact);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gameplay::terrain::TerrainDefinition;
+
+    /// Flat ground at 0 with a cylindrical wall: analytic LOS oracle.
+    struct Wall {
+        center_m: Vec2,
+        radius_m: f32,
+        height_m: f32,
+    }
+
+    impl TerrainHeight for Wall {
+        fn height_at_m(&self, position_m: Vec2) -> f32 {
+            if position_m.distance(self.center_m) <= self.radius_m {
+                self.height_m
+            } else {
+                0.0
+            }
+        }
+    }
+
+    const EYE_M: f32 = 1.7;
+
+    #[test]
+    fn los_on_flat_terrain_is_always_clear() {
+        let flat = TerrainDefinition::Flat { height_m: 0.0 };
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(120.0, -45.0);
+        assert!(has_line_of_sight(&flat, a, EYE_M, b, EYE_M));
+        // zero distance is defined as visible
+        assert!(has_line_of_sight(&flat, a, EYE_M, a, EYE_M));
+    }
+
+    #[test]
+    fn tall_wall_between_observers_blocks_los() {
+        let wall = Wall {
+            center_m: Vec2::new(20.0, 0.0),
+            radius_m: 2.0,
+            height_m: 10.0,
+        };
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(40.0, 0.0);
+        assert!(!has_line_of_sight(&wall, a, EYE_M, b, EYE_M));
+    }
+
+    #[test]
+    fn elevated_observers_see_over_wall() {
+        let wall = Wall {
+            center_m: Vec2::new(20.0, 0.0),
+            radius_m: 2.0,
+            height_m: 10.0,
+        };
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(40.0, 0.0);
+        // eyes at 12m (e.g. towers): sightline stays above the 10m wall
+        assert!(has_line_of_sight(&wall, a, 12.0, b, 12.0));
+    }
+
+    #[test]
+    fn los_is_symmetric_for_equal_eye_heights() {
+        // asymmetric wall placement so a directional sampling bug would show
+        let wall = Wall {
+            center_m: Vec2::new(5.0, 0.0),
+            radius_m: 2.0,
+            height_m: 10.0,
+        };
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(40.0, 0.0);
+        assert_eq!(
+            has_line_of_sight(&wall, a, EYE_M, b, EYE_M),
+            has_line_of_sight(&wall, b, EYE_M, a, EYE_M),
+        );
+    }
+
+    /// Documents (rather than endorses) current behavior: below the 2m sample
+    /// spacing, no intermediate samples are taken, so even a razor-thin wall
+    /// between two adjacent units is ignored. If this test starts failing you
+    /// have *fixed* the edge case and should update the LOS docs.
+    #[test]
+    fn los_below_sample_spacing_never_blocks() {
+        let wall = Wall {
+            center_m: Vec2::new(0.75, 0.0),
+            radius_m: 0.5,
+            height_m: 100.0,
+        };
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(1.5, 0.0);
+        assert!(has_line_of_sight(&wall, a, EYE_M, b, EYE_M));
+    }
+
+    #[test]
+    fn upsert_contact_updates_in_place_per_sensor_kind() {
+        let mut memory = PerceptionMemory::default();
+        let mut world = bevy::ecs::world::World::new();
+        let target = world.spawn_empty().id();
+
+        let contact = |kind, tick| Contact {
+            target,
+            last_seen_position_m: Vec2::ZERO,
+            last_seen_time_s: 0.0,
+            last_seen_tick: tick,
+            confidence: 1.0,
+            observed_life_status: ReportedLifeStatus::Alive,
+            kind,
+            contact_type: ContactType::Hostile,
+        };
+
+        upsert_contact(&mut memory, contact(ContactKind::Visual, 1));
+        upsert_contact(&mut memory, contact(ContactKind::Auditory, 1));
+        upsert_contact(&mut memory, contact(ContactKind::Visual, 2));
+
+        // same target + same kind replaces; different kind coexists
+        assert_eq!(memory.contacts.len(), 2);
+        assert_eq!(memory.unique_contact_count(), 1);
+        let visual = memory
+            .contacts
+            .iter()
+            .find(|c| c.kind == ContactKind::Visual)
+            .unwrap();
+        assert_eq!(visual.last_seen_tick, 2);
+    }
+}

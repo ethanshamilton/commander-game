@@ -77,3 +77,60 @@ pub const LEVEL_HEIGHT_M: f32 = 5.0;
 pub fn elevation_level_at(terrain: &impl TerrainHeight, position_m: Vec2) -> i32 {
     (terrain.height_at_m(position_m) / LEVEL_HEIGHT_M).floor() as i32
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Deliberately non-square (3 wide, 2 deep): an x/z indexing swap is
+    /// invisible on square grids.
+    fn test_heightmap() -> HeightMap {
+        HeightMap {
+            origin_m: Vec2::ZERO,
+            sample_spacing_m: 10.0,
+            width: 3,
+            depth: 2,
+            // row z=0: 0, 10, 20 | row z=1: 30, 40, 50
+            heights_m: &[0.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+        }
+    }
+
+    #[test]
+    fn heightmap_is_exact_at_sample_points() {
+        let hm = test_heightmap();
+        assert_eq!(hm.height_at_m(Vec2::new(0.0, 0.0)), 0.0);
+        assert_eq!(hm.height_at_m(Vec2::new(20.0, 0.0)), 20.0);
+        assert_eq!(hm.height_at_m(Vec2::new(0.0, 10.0)), 30.0);
+        // corner of the non-square grid: catches z * width + x vs x * depth + z
+        assert_eq!(hm.height_at_m(Vec2::new(20.0, 10.0)), 50.0);
+    }
+
+    #[test]
+    fn heightmap_bilinear_midpoint_matches_hand_computation() {
+        let hm = test_heightmap();
+        // cell (0..10, 0..10) has corners 0, 10, 30, 40 -> mean at center = 20
+        assert_eq!(hm.height_at_m(Vec2::new(5.0, 5.0)), 20.0);
+        // interpolation along x only, z=0 row: halfway between 10 and 20
+        assert_eq!(hm.height_at_m(Vec2::new(15.0, 0.0)), 15.0);
+    }
+
+    #[test]
+    fn heightmap_clamps_out_of_bounds_queries_to_border() {
+        let hm = test_heightmap();
+        assert_eq!(hm.height_at_m(Vec2::new(-100.0, -100.0)), 0.0);
+        assert_eq!(hm.height_at_m(Vec2::new(1000.0, 1000.0)), 50.0);
+        // out of bounds on one axis only
+        assert_eq!(hm.height_at_m(Vec2::new(1000.0, 0.0)), 20.0);
+    }
+
+    #[test]
+    fn flat_terrain_is_uniform_and_levels_floor_correctly() {
+        let flat = TerrainDefinition::Flat { height_m: 7.0 };
+        assert_eq!(flat.height_at_m(Vec2::new(-500.0, 12345.0)), 7.0);
+        // LEVEL_HEIGHT_M = 5.0: height 7 -> level 1
+        assert_eq!(elevation_level_at(&flat, Vec2::ZERO), 1);
+        // negative heights floor downward, not toward zero
+        let below = TerrainDefinition::Flat { height_m: -0.1 };
+        assert_eq!(elevation_level_at(&below, Vec2::ZERO), -1);
+    }
+}

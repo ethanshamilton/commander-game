@@ -197,3 +197,91 @@ fn point_from_circle_border(center: Vec2, toward: Vec2, radius: f32) -> Option<V
 
     Some(center + offset / distance * radius)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rifle() -> Weapon {
+        Weapon::default_rifle()
+    }
+
+    fn p_at(distance_m: f32) -> f32 {
+        hit_probability(ShotContext {
+            weapon: &rifle(),
+            distance_m,
+            marksmanship: 1.0,
+            contact_confidence: 1.0,
+        })
+    }
+
+    #[test]
+    fn hit_probability_never_increases_with_distance() {
+        let mut previous = f32::INFINITY;
+        for distance_m in [1.0, 35.0, 70.0, 71.0, 100.0, 139.0, 140.0, 200.0] {
+            let p = p_at(distance_m);
+            assert!(
+                p <= previous,
+                "p_hit rose from {previous} to {p} at {distance_m}m"
+            );
+            previous = p;
+        }
+    }
+
+    #[test]
+    fn range_modifier_is_continuous_at_both_knees() {
+        let w = rifle();
+        // no discontinuity where the lerp region meets the flat regions
+        let eps = 0.01;
+        let at_effective = range_modifier(w.effective_range_m, w.effective_range_m, w.max_range_m);
+        let just_past = range_modifier(w.effective_range_m + eps, w.effective_range_m, w.max_range_m);
+        assert!((at_effective - 1.0).abs() < 1e-6);
+        assert!((just_past - 1.0).abs() < 1e-3);
+
+        let at_max = range_modifier(w.max_range_m, w.effective_range_m, w.max_range_m);
+        let just_before = range_modifier(w.max_range_m - eps, w.effective_range_m, w.max_range_m);
+        assert!((at_max - 0.25).abs() < 1e-6);
+        assert!((just_before - 0.25).abs() < 1e-3);
+    }
+
+    #[test]
+    fn hit_probability_clamps_under_degenerate_inputs() {
+        let superhuman = hit_probability(ShotContext {
+            weapon: &rifle(),
+            distance_m: 1.0,
+            marksmanship: 50.0,
+            contact_confidence: 1.0,
+        });
+        assert!(superhuman <= 0.95);
+
+        let blind = hit_probability(ShotContext {
+            weapon: &rifle(),
+            distance_m: 200.0,
+            marksmanship: 0.0,
+            contact_confidence: 0.0,
+        });
+        assert!(blind >= 0.01);
+    }
+
+    #[test]
+    fn miss_endpoints_never_land_on_the_target() {
+        use rand::SeedableRng;
+        let mut rng = StdRng::seed_from_u64(42);
+        let shooter = Vec2::ZERO;
+        let target = Vec2::new(50.0, 0.0);
+
+        // near-miss rolls should land close; wild rolls land far, but a miss
+        // with severity > 0 must displace away from the exact target point
+        for roll in [0.51, 0.75, 0.99] {
+            let p_hit = 0.5;
+            let endpoint = random_miss_endpoint(&mut rng, shooter, target, p_hit, roll);
+            assert!(
+                endpoint.distance(target) > 0.0,
+                "miss with roll {roll} landed exactly on target"
+            );
+        }
+        // fully degenerate: shooter standing on target falls back to target pos
+        let degenerate = random_miss_endpoint(&mut rng, target, target, 0.5, 0.9);
+        assert_eq!(degenerate, target);
+    }
+}

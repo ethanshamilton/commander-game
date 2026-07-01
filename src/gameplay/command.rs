@@ -210,3 +210,138 @@ impl CommandForest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::world::World;
+
+    fn spawn_entities(count: usize) -> (World, Vec<Entity>) {
+        let mut world = World::new();
+        let entities = (0..count).map(|_| world.spawn_empty().id()).collect();
+        (world, entities)
+    }
+
+    /// The forest is a denormalized pair of maps; every mutation must keep
+    /// them coherent. One helper catches a whole family of desync bugs.
+    fn assert_coherent(forest: &CommandForest) {
+        for (&child, &parent) in &forest.superior_of {
+            assert!(
+                forest.subordinates_of(parent).contains(&child),
+                "superior_of has {child:?} -> {parent:?} but parent's subordinate list disagrees"
+            );
+        }
+        for (&parent, children) in &forest.subordinates_of {
+            for &child in children {
+                assert_eq!(
+                    forest.superior_of(child),
+                    Some(parent),
+                    "{parent:?} lists {child:?} as subordinate but superior_of disagrees"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_superior_rejects_cycles_and_self_command() {
+        let (_world, e) = spawn_entities(3);
+        let (a, b, c) = (e[0], e[1], e[2]);
+        let mut forest = CommandForest::default();
+
+        forest.set_superior(b, Some(a)).unwrap();
+        forest.set_superior(c, Some(b)).unwrap();
+
+        // closing the loop a -> b -> c -> a must fail, at any depth
+        assert!(forest.set_superior(a, Some(c)).is_err());
+        assert!(forest.set_superior(a, Some(b)).is_err());
+        assert!(forest.set_superior(a, Some(a)).is_err());
+
+        // failed assignments must not have mutated anything
+        assert_eq!(forest.superior_of(a), None);
+        assert_coherent(&forest);
+    }
+
+    #[test]
+    fn reparenting_removes_child_from_old_superior() {
+        let (_world, e) = spawn_entities(3);
+        let (old, new, child) = (e[0], e[1], e[2]);
+        let mut forest = CommandForest::default();
+
+        forest.set_superior(child, Some(old)).unwrap();
+        forest.set_superior(child, Some(new)).unwrap();
+
+        assert_eq!(forest.superior_of(child), Some(new));
+        assert!(
+            !forest.subordinates_of(old).contains(&child),
+            "stale subordinate entry left on old superior"
+        );
+        assert_coherent(&forest);
+
+        // re-assigning to the same superior must not duplicate the child
+        forest.set_superior(child, Some(new)).unwrap();
+        assert_eq!(forest.subordinates_of(new).len(), 1);
+    }
+
+    #[test]
+    fn remove_unit_orphans_children_as_roots_without_dangling_refs() {
+        let (_world, e) = spawn_entities(4);
+        let (root, mid, child_a, child_b) = (e[0], e[1], e[2], e[3]);
+        let mut forest = CommandForest::default();
+
+        forest.set_superior(mid, Some(root)).unwrap();
+        forest.set_superior(child_a, Some(mid)).unwrap();
+        forest.set_superior(child_b, Some(mid)).unwrap();
+
+        forest.remove_unit(mid);
+
+        // children become roots (conservative policy), not reattached to root
+        assert_eq!(forest.superior_of(child_a), None);
+        assert_eq!(forest.superior_of(child_b), None);
+        assert!(!forest.subordinates_of(root).contains(&mid));
+        assert!(forest.roots().contains(&child_a));
+        assert_coherent(&forest);
+    }
+
+    #[test]
+    fn can_command_allows_self_and_ancestors_only() {
+        let (_world, e) = spawn_entities(4);
+        let (root, mid, leaf, sibling) = (e[0], e[1], e[2], e[3]);
+        let mut forest = CommandForest::default();
+
+        forest.set_superior(mid, Some(root)).unwrap();
+        forest.set_superior(leaf, Some(mid)).unwrap();
+        forest.set_superior(sibling, Some(root)).unwrap();
+
+        assert!(forest.can_command(leaf, leaf), "self-command allowed");
+        assert!(forest.can_command(mid, leaf), "direct superior");
+        assert!(forest.can_command(root, leaf), "transitive superior");
+        assert!(!forest.can_command(leaf, mid), "authority is not upward");
+        assert!(!forest.can_command(sibling, leaf), "authority is not lateral");
+    }
+
+    #[test]
+    fn from_assignments_skips_cross_side_links_but_keeps_units() {
+        use crate::actors::units::Side;
+        use std::collections::HashMap;
+
+        let (_world, e) = spawn_entities(2);
+        let (blue, red) = (e[0], e[1]);
+        let ids: HashMap<UnitId, Entity> =
+            [(UnitId("blue"), blue), (UnitId("red"), red)].into();
+
+        let assignments = [CommandAssignmentDefinition {
+            subordinate: UnitId("red"),
+            superior: Some(UnitId("blue")),
+        }];
+
+        let forest = CommandForest::from_assignments(&assignments, &ids, |entity| {
+            Some(if entity == blue { Side::Blue } else { Side::Red })
+        });
+
+        // link rejected, but both units still exist as roots
+        assert_eq!(forest.superior_of(red), None);
+        let roots = forest.roots();
+        assert!(roots.contains(&red) && roots.contains(&blue));
+        assert_coherent(&forest);
+    }
+}
