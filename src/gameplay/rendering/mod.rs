@@ -1,6 +1,7 @@
 #![doc = include_str!("../../../docs/gameplay/rendering.md")]
 
 mod camera;
+mod combat;
 mod map;
 mod overlays;
 mod units;
@@ -33,6 +34,7 @@ impl Plugin for GameplayRenderingPlugin {
             .add_systems(Startup, configure_gizmos)
             .add_plugins((
                 camera::BattlefieldCameraPlugin,
+                combat::CombatRenderingPlugin,
                 map::MapRenderingPlugin,
                 units::UnitRenderingPlugin,
                 overlays::TacticalOverlayRenderingPlugin,

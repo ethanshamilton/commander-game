@@ -2,13 +2,13 @@
 #![doc = include_str!("../docs/truth_pipeline.md")]
 
 mod actions;
+mod actors;
 mod ai;
 mod gameplay;
 mod maps;
 mod missions;
 mod player;
 mod screens;
-mod units;
 
 use ai::AiPlugins;
 use bevy::gilrs::GilrsPlugin;

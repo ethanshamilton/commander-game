@@ -1,8 +1,8 @@
 #![doc = include_str!("../../docs/gameplay/simulation.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Mobility, Soldier};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
-use crate::units::{Alive, Mobility, Soldier};
 use bevy::prelude::*;
 
 pub const SIMULATION_TICK_HZ: f64 = 20.0;

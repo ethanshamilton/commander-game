@@ -1,9 +1,9 @@
 #![doc = include_str!("../docs/actions.md")]
 #![allow(dead_code)] // allow temporarily while sketching
 
+use crate::actors::units::*;
 use crate::screens::mission;
 use crate::screens::mission::{MenuId, MenuState};
-use crate::units::*;
 use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{Activate, Button, Checkbox, ValueChange, checkbox_self_update, observe};

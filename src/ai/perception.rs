@@ -1,12 +1,12 @@
 #![doc = include_str!("../../docs/ai/perception.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Allegiance, Dead, Soldier};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::terrain::TerrainHeight;
 use crate::player::knowledge::ReportedLifeStatus;
-use crate::units::{Alive, Allegiance, Dead, Soldier};
 use bevy::prelude::*;
 
 const DEFAULT_VISUAL_RANGE_M: f32 = 150.0;

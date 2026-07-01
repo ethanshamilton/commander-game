@@ -1,8 +1,8 @@
 #![doc = include_str!("../../docs/gameplay/comms.md")]
 
+use crate::actors::units::{Alive, Allegiance, Side, Soldier};
 use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
-use crate::units::{Alive, Allegiance, Side, Soldier};
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -95,7 +95,7 @@ impl CommsGraph {
 #[derive(Debug, Clone, Copy)]
 struct CommsSnapshot<'a> {
     entity: Entity,
-    side: crate::units::Side,
+    side: crate::actors::units::Side,
     voice: Option<VoiceComms>,
     memory: &'a PerceptionMemory,
 }

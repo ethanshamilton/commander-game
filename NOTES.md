@@ -21,4 +21,4 @@ Running/evergreen notes file for the project.
   - Info packets should probably be sent at some interval. A unit wouldn't be constantly reporting where its hostile contacts are to the leader, it would report them at like, every 10 seconds or something.
 
 ## NEEDS FIX
-- There are currently two notions of position, one in units.rs and the other is BattlefieldPosition. Need to reconcile.
+- There are currently two notions of position, one in actors/units.rs and the other is BattlefieldPosition. Need to reconcile.

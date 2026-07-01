@@ -1,8 +1,8 @@
 #![doc = include_str!("../docs/missions.md")]
 
+use crate::actors::units::{Rank, Role, Side};
 use crate::gameplay::command::{CommandAssignmentDefinition, UnitId};
 use crate::maps::{DEMO_MAP, MapDefinition};
-use crate::units::{Rank, Role, Side};
 
 pub struct MissionDefinition {
     pub name: &'static str,

@@ -1,11 +1,11 @@
 #![doc = include_str!("../../docs/player/knowledge.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Allegiance, Side, Soldier};
 use crate::ai::perception::PerceptionMemory;
 use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
-use crate::units::{Alive, Allegiance, Side, Soldier};
 use bevy::prelude::*;
 
 pub struct PlayerKnowledgePlugin;

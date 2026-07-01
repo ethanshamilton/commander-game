@@ -2,13 +2,13 @@
 
 use super::RenderingSet;
 use crate::GameState;
+use crate::actors::units::{Allegiance, Side, Soldier};
 use crate::gameplay::components::Heading;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::SimulationClock;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportedLifeStatus};
 use crate::player::selection::SelectedUnit;
-use crate::units::{Allegiance, Side, Soldier};
 use bevy::prelude::*;
 
 pub struct UnitRenderingPlugin;

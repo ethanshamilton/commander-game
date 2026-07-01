@@ -2,6 +2,7 @@
 
 use super::RenderingSet;
 use crate::GameState;
+use crate::actors::units::{Allegiance, Soldier};
 use crate::ai::perception::{
     AuditorySensor, Contact, ContactType, EyeHeight, PerceptionMemory, VisualSensor,
     has_line_of_sight,
@@ -15,7 +16,6 @@ use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::{PlayerControl, UnitIntelAccess};
 use crate::player::knowledge::{PlayerTacticalKnowledge, ReportedLifeStatus};
 use crate::player::selection::SelectedUnit;
-use crate::units::{Allegiance, Soldier};
 use bevy::prelude::*;
 
 pub struct TacticalOverlayRenderingPlugin;
@@ -423,7 +423,7 @@ fn draw_selected_unit_command_relations(
 fn visible_known_unit(
     knowledge: &PlayerTacticalKnowledge,
     entity: Entity,
-    player_side: crate::units::Side,
+    player_side: crate::actors::units::Side,
     tick: u64,
 ) -> Option<&crate::player::knowledge::KnownUnit> {
     let known = knowledge.get(entity)?;
@@ -495,10 +495,10 @@ fn point_from_circle_border(center: Vec2, toward: Vec2, radius: f32) -> Option<V
     Some(center + offset / distance * radius)
 }
 
-fn side_color(side: crate::units::Side, alpha: f32) -> Color {
+fn side_color(side: crate::actors::units::Side, alpha: f32) -> Color {
     match side {
-        crate::units::Side::Blue => Color::srgba(0.0, 0.85, 1.0, alpha),
-        crate::units::Side::Red => Color::srgba(1.0, 0.15, 0.1, alpha),
+        crate::actors::units::Side::Blue => Color::srgba(0.0, 0.85, 1.0, alpha),
+        crate::actors::units::Side::Red => Color::srgba(1.0, 0.15, 0.1, alpha),
     }
 }
 

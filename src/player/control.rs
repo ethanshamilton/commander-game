@@ -1,6 +1,6 @@
 #![doc = include_str!("../../docs/player/control.md")]
 
-use crate::units::Side;
+use crate::actors::units::Side;
 use bevy::prelude::*;
 
 pub struct PlayerControlPlugin;

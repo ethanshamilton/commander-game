@@ -1,11 +1,12 @@
 #![doc = include_str!("../../docs/gameplay/lifecycle.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Dead, Health, Soldier};
 use crate::ai::perception::{AuditorySensor, EyeHeight, PerceptionMemory, VisualSensor};
+use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::simulation::UnitOrder;
 use crate::player::selection::SelectedUnit;
-use crate::units::{Alive, Dead, Health, Soldier};
 use bevy::prelude::*;
 
 pub struct UnitLifecyclePlugin;
@@ -31,6 +32,8 @@ pub fn kill_unit(commands: &mut Commands, entity: Entity) {
         .remove::<Alive>()
         .insert(Dead)
         .remove::<UnitOrder>()
+        .remove::<CombatOrder>()
+        .remove::<CombatState>()
         .remove::<VisualSensor>()
         .remove::<AuditorySensor>()
         .remove::<EyeHeight>()

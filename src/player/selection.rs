@@ -1,13 +1,14 @@
 #![doc = include_str!("../../docs/player/selection.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Allegiance, Soldier};
+use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
-use crate::units::{Alive, Allegiance, Soldier};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -22,7 +23,7 @@ impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectedUnit>().add_systems(
             Update,
-            (select_unit, issue_move_order).run_if(in_state(GameState::MissionScreen)),
+            (select_unit, issue_contextual_order).run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -85,7 +86,7 @@ fn select_unit(
         .map(|(entity, _)| entity);
 }
 
-fn issue_move_order(
+fn issue_contextual_order(
     mut commands: Commands,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -153,7 +154,39 @@ fn issue_move_order(
         return;
     };
 
+    if let Some(target) =
+        hostile_unit_at_cursor(&knowledge, control.side, clock.tick, world_position)
+    {
+        commands
+            .entity(entity)
+            .insert(CombatOrder::FireAt { target });
+        return;
+    }
+
     commands.entity(entity).insert(UnitOrder::MoveTo {
         destination_m: world_position.map(to_meters),
     });
+}
+
+fn hostile_unit_at_cursor(
+    knowledge: &PlayerTacticalKnowledge,
+    player_side: crate::actors::units::Side,
+    tick: u64,
+    world_position: Vec2,
+) -> Option<Entity> {
+    let selection_radius = meters(SELECTION_RADIUS_M);
+
+    knowledge
+        .units
+        .iter()
+        .filter(|unit| unit.side != player_side && unit.last_observed_tick == tick)
+        .filter_map(|unit| {
+            let distance = unit
+                .last_known_position_m
+                .map(meters)
+                .distance(world_position);
+            (distance <= selection_radius).then_some((unit.entity, distance))
+        })
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(entity, _)| entity)
 }

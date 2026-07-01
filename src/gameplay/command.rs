@@ -1,6 +1,6 @@
 #![doc = include_str!("../../docs/gameplay/command.md")]
 
-use crate::units::Side;
+use crate::actors::units::Side;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 

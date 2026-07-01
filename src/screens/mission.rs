@@ -1,9 +1,13 @@
 #![doc = include_str!("../../docs/screens/mission.md")]
 
 use crate::actions::*;
+use crate::actors::skills::Marksmanship;
+use crate::actors::units::*;
+use crate::actors::weapons::Weapon;
 use crate::ai::perception::{
     AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
 };
+use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::command::{CommandForest, UnitIdentity};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
@@ -14,7 +18,6 @@ use crate::missions::{DEMO_MISSION, MissionDefinition};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
-use crate::units::*;
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -590,6 +593,10 @@ pub fn spawn_soldier_at(
             SensorSignature::default(),
         ))
         .insert((
+            Weapon::default_rifle(),
+            CombatState::default(),
+            Marksmanship::default(),
+            CombatOrder::HoldFire,
             PerceptionMemory::default(),
             VoiceComms::default(),
             CommsLinks::default(),
