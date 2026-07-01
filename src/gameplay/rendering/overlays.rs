@@ -3,6 +3,7 @@
 use super::RenderingSet;
 use crate::GameState;
 use crate::actors::units::{Allegiance, Soldier};
+use crate::actors::weapons::Weapon;
 use crate::ai::perception::{
     AuditorySensor, Contact, ContactType, EyeHeight, PerceptionMemory, VisualSensor,
     has_line_of_sight,
@@ -26,6 +27,7 @@ impl Plugin for TacticalOverlayRenderingPlugin {
             Update,
             (
                 draw_selected_unit_sensor_cone,
+                draw_selected_unit_weapon_range,
                 draw_selected_unit_order,
                 draw_selected_unit_contacts,
                 draw_selected_unit_comms,
@@ -40,6 +42,7 @@ impl Plugin for TacticalOverlayRenderingPlugin {
 
 const SENSOR_CONE_SEGMENTS: usize = 48;
 const SENSOR_VISIBILITY_STEP_METERS: f32 = 2.0;
+const WEAPON_RANGE_RING_ALPHA: f32 = 0.45;
 const ORDER_DESTINATION_RADIUS: f32 = 4.0;
 const CONTACT_BOX_SIZE: f32 = 24.0;
 const UNIT_OVERLAY_RADIUS: f32 = 7.0;
@@ -122,6 +125,34 @@ fn draw_selected_unit_sensor_cone(
     {
         gizmos.line_2d(line_start, right_endpoint, color);
     }
+}
+
+fn draw_selected_unit_weapon_range(
+    selected: Res<SelectedUnit>,
+    control: Res<PlayerControl>,
+    clock: Res<SimulationClock>,
+    knowledge: Res<PlayerTacticalKnowledge>,
+    units: Query<(&BattlefieldPosition, &Allegiance, &Weapon), With<Soldier>>,
+    mut gizmos: Gizmos,
+) {
+    let Some(entity) = selected.entity else {
+        return;
+    };
+
+    let Ok((position, allegiance, weapon)) = units.get(entity) else {
+        return;
+    };
+
+    if allegiance.side != control.side || !knowledge.is_current(entity, clock.tick) {
+        return;
+    }
+
+    let center = position.0.map(meters);
+    let color = Color::srgba(1.0, 0.1, 0.1, WEAPON_RANGE_RING_ALPHA);
+
+    gizmos
+        .circle_2d(center, meters(weapon.max_range_m), color)
+        .resolution(96);
 }
 
 fn visible_sensor_endpoint(

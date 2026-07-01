@@ -9,7 +9,6 @@ Running/evergreen notes file for the project.
 ## COMMAND
 
 ### HIERARCHY
-- When a unit is selected, we should display links up and down the chain of command one level. We should point to a unit's superior and have the subordinate units point up to the selected unit. These should be blue lines.
 
 ## COMMUNICATIONS
 - Enemies may be able to intercept communications based on the communication type and sensor ranges.

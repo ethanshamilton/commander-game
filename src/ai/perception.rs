@@ -95,6 +95,16 @@ pub struct PerceptionMemory {
     pub contacts: Vec<Contact>,
 }
 
+impl PerceptionMemory {
+    pub fn unique_contact_count(&self) -> usize {
+        self.contacts
+            .iter()
+            .map(|contact| contact.target)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Contact {

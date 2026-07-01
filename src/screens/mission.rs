@@ -212,7 +212,9 @@ pub fn update_selected_unit_info_panel(
         "Visual sensor: unknown".to_string()
     };
     let contact_count = if is_current && is_controlled_side {
-        memory.map(|memory| memory.contacts.len()).unwrap_or(0)
+        memory
+            .map(PerceptionMemory::unique_contact_count)
+            .unwrap_or(0)
     } else {
         0
     };
