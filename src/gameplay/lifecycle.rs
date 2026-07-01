@@ -1,12 +1,11 @@
 #![doc = include_str!("../../docs/gameplay/lifecycle.md")]
 
 use crate::GameState;
-use crate::actors::units::{Alive, Dead, Health, Soldier};
+use crate::actors::units::{Alive, Dead, Soldier};
 use crate::ai::perception::{AuditorySensor, EyeHeight, PerceptionMemory, VisualSensor};
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::simulation::UnitOrder;
-use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 
 pub struct UnitLifecyclePlugin;
@@ -15,8 +14,7 @@ impl Plugin for UnitLifecyclePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (debug_kill_selected_unit, warn_invalid_life_status)
-                .run_if(in_state(GameState::MissionScreen)),
+            warn_invalid_life_status.run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -40,28 +38,6 @@ pub fn kill_unit(commands: &mut Commands, entity: Entity) {
         .remove::<VoiceComms>()
         .remove::<CommsLinks>()
         .remove::<PerceptionMemory>();
-}
-
-fn debug_kill_selected_unit(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    selected: Res<SelectedUnit>,
-    mut commands: Commands,
-    mut health: Query<&mut Health, With<Soldier>>,
-) {
-    if !keyboard.just_pressed(KeyCode::KeyK) {
-        return;
-    }
-
-    let Some(entity) = selected.entity else {
-        return;
-    };
-
-    if let Ok(mut health) = health.get_mut(entity) {
-        health.current = 0;
-    }
-
-    kill_unit(&mut commands, entity);
-    info!("Debug killed selected unit: {entity:?}");
 }
 
 fn warn_invalid_life_status(

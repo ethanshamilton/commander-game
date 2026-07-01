@@ -1,5 +1,6 @@
 use crate::GameState;
 use crate::gameplay::combat::ResolvedShot;
+use crate::gameplay::simulation::SimulationSet;
 use bevy::audio::{AudioPlayer, AudioSource, PlaybackSettings, Volume};
 use bevy::prelude::*;
 
@@ -11,8 +12,10 @@ pub struct CombatAudioPlugin;
 impl Plugin for CombatAudioPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_combat_audio).add_systems(
-            Update,
-            play_fire_sounds.run_if(in_state(GameState::MissionScreen)),
+            FixedUpdate,
+            play_fire_sounds
+                .in_set(SimulationSet::Cleanup)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

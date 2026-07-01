@@ -234,7 +234,11 @@ mod tests {
         // no discontinuity where the lerp region meets the flat regions
         let eps = 0.01;
         let at_effective = range_modifier(w.effective_range_m, w.effective_range_m, w.max_range_m);
-        let just_past = range_modifier(w.effective_range_m + eps, w.effective_range_m, w.max_range_m);
+        let just_past = range_modifier(
+            w.effective_range_m + eps,
+            w.effective_range_m,
+            w.max_range_m,
+        );
         assert!((at_effective - 1.0).abs() < 1e-6);
         assert!((just_past - 1.0).abs() < 1e-3);
 

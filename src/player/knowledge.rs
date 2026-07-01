@@ -6,6 +6,7 @@ use crate::ai::perception::PerceptionMemory;
 use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::components::BattlefieldPosition;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
+use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;
 
 pub struct PlayerKnowledgePlugin;
@@ -66,14 +67,6 @@ pub struct KnownUnit {
     pub last_observed_tick: u64,
     /// Tick when the player received or refreshed the report through comms.
     pub last_reported_tick: u64,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReportedLifeStatus {
-    Alive,
-    Dead,
-    Unknown,
 }
 
 fn update_player_tactical_knowledge(

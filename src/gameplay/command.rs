@@ -316,7 +316,10 @@ mod tests {
         assert!(forest.can_command(mid, leaf), "direct superior");
         assert!(forest.can_command(root, leaf), "transitive superior");
         assert!(!forest.can_command(leaf, mid), "authority is not upward");
-        assert!(!forest.can_command(sibling, leaf), "authority is not lateral");
+        assert!(
+            !forest.can_command(sibling, leaf),
+            "authority is not lateral"
+        );
     }
 
     #[test]
@@ -326,8 +329,7 @@ mod tests {
 
         let (_world, e) = spawn_entities(2);
         let (blue, red) = (e[0], e[1]);
-        let ids: HashMap<UnitId, Entity> =
-            [(UnitId("blue"), blue), (UnitId("red"), red)].into();
+        let ids: HashMap<UnitId, Entity> = [(UnitId("blue"), blue), (UnitId("red"), red)].into();
 
         let assignments = [CommandAssignmentDefinition {
             subordinate: UnitId("red"),
@@ -335,7 +337,11 @@ mod tests {
         }];
 
         let forest = CommandForest::from_assignments(&assignments, &ids, |entity| {
-            Some(if entity == blue { Side::Blue } else { Side::Red })
+            Some(if entity == blue {
+                Side::Blue
+            } else {
+                Side::Red
+            })
         });
 
         // link rejected, but both units still exist as roots

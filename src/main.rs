@@ -5,6 +5,7 @@ mod actions;
 mod actors;
 mod ai;
 mod gameplay;
+mod intel;
 mod maps;
 mod missions;
 mod player;

@@ -14,8 +14,9 @@ use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::intel::ReportedLifeStatus;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
-use crate::player::knowledge::{PlayerTacticalKnowledge, ReportedLifeStatus};
+use crate::player::knowledge::PlayerTacticalKnowledge;
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 

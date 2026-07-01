@@ -5,6 +5,7 @@ pub mod combat;
 pub mod command;
 pub mod comms;
 pub mod components;
+pub mod debug_powers;
 pub mod diagnostics;
 pub mod lifecycle;
 pub mod map;
@@ -18,6 +19,7 @@ use bevy::app::{PluginGroup, PluginGroupBuilder};
 use combat::CombatPlugin;
 use command::CommandPlugin;
 use comms::CommsPlugin;
+use debug_powers::DebugPowersPlugin;
 use diagnostics::GameplayDiagnosticsPlugin;
 use lifecycle::UnitLifecyclePlugin;
 use rendering::GameplayRenderingPlugin;
@@ -30,6 +32,7 @@ impl PluginGroup for GameplayPlugins {
         PluginGroupBuilder::start::<Self>()
             .add(SimulationPlugin)
             .add(UnitLifecyclePlugin)
+            .add(DebugPowersPlugin)
             .add(CommandPlugin)
             .add(CommsPlugin)
             .add(CombatPlugin)
