@@ -1,5 +1,6 @@
 #![doc = include_str!("../../docs/gameplay.md")]
 
+pub mod audio;
 pub mod combat;
 pub mod command;
 pub mod comms;
@@ -12,6 +13,7 @@ pub mod rendering;
 pub mod simulation;
 pub mod terrain;
 
+use audio::GameplayAudioPlugin;
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use combat::CombatPlugin;
 use command::CommandPlugin;
@@ -33,5 +35,6 @@ impl PluginGroup for GameplayPlugins {
             .add(CombatPlugin)
             .add(GameplayDiagnosticsPlugin)
             .add(GameplayRenderingPlugin)
+            .add(GameplayAudioPlugin)
     }
 }
