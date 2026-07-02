@@ -2,7 +2,7 @@
 
 use super::RenderingSet;
 use crate::GameState;
-use crate::actors::units::{Allegiance, Soldier};
+use crate::actors::units::{Alive, Allegiance, Soldier};
 use crate::actors::weapons::Weapon;
 use crate::ai::perception::{
     AuditorySensor, Contact, ContactType, EyeHeight, PerceptionMemory, VisualSensor,
@@ -16,7 +16,7 @@ use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::intel::ReportedLifeStatus;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
-use crate::player::knowledge::PlayerTacticalKnowledge;
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 
@@ -237,6 +237,8 @@ fn draw_selected_unit_contacts(
     clock: Res<SimulationClock>,
     control: Res<PlayerControl>,
     knowledge: Res<PlayerTacticalKnowledge>,
+    graph: Res<CommsGraph>,
+    controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
     units: Query<
         (
             &BattlefieldPosition,
@@ -252,6 +254,19 @@ fn draw_selected_unit_contacts(
     let Some(entity) = selected.entity else {
         return;
     };
+
+    let Ok(controlled_entity) = controlled.single() else {
+        return;
+    };
+
+    if !graph.can_reach(controlled_entity, entity, control.side, |candidate| {
+        units
+            .get(candidate)
+            .ok()
+            .map(|(_, allegiance, _, _)| allegiance.side)
+    }) {
+        return;
+    }
 
     let Ok((position, allegiance, memory, intel)) = units.get(entity) else {
         return;

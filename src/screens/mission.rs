@@ -13,6 +13,7 @@ use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
+use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
 use crate::gameplay::simulation::SimulationClock;
 use crate::missions::{DEMO_MISSION, MissionDefinition};
 use crate::player::control::PlayerControl;
@@ -43,6 +44,12 @@ pub struct SimulationClockText;
 
 #[derive(Component)]
 pub struct SimulationPerfText;
+
+#[derive(Component)]
+pub struct MissionOutcomeBanner;
+
+#[derive(Component)]
+pub struct MissionOutcomeText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -119,6 +126,7 @@ impl Plugin for MissionScreenPlugin {
                     update_selected_unit_info_panel,
                     update_simulation_clock_text,
                     update_simulation_perf_text,
+                    update_mission_outcome_banner,
                 )
                     .run_if(in_state(crate::GameState::MissionScreen)),
             );
@@ -257,6 +265,39 @@ pub fn update_simulation_clock_text(
     **text = format!("T+{minutes:02}:{seconds:02}  tick {}{paused}", clock.tick);
 }
 
+pub fn update_mission_outcome_banner(
+    outcome: Res<MissionOutcome>,
+    mut banner_query: Query<&mut Node, With<MissionOutcomeBanner>>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<MissionOutcomeText>>,
+) {
+    if !outcome.is_changed() {
+        return;
+    }
+
+    let Ok(mut banner_node) = banner_query.single_mut() else {
+        return;
+    };
+    let Ok((mut text, mut text_color)) = text_query.single_mut() else {
+        return;
+    };
+
+    match *outcome {
+        MissionOutcome::InProgress => {
+            banner_node.display = Display::None;
+        }
+        MissionOutcome::Victory => {
+            banner_node.display = Display::Flex;
+            **text = "VICTORY".to_string();
+            *text_color = TextColor(Color::srgb(0.45, 1.0, 0.45));
+        }
+        MissionOutcome::Defeat => {
+            banner_node.display = Display::Flex;
+            **text = "DEFEAT".to_string();
+            *text_color = TextColor(Color::srgb(1.0, 0.25, 0.2));
+        }
+    }
+}
+
 pub fn update_simulation_perf_text(
     perf: Res<SimulationPerf>,
     mut text_query: Query<(&mut Text, &mut TextColor), With<SimulationPerfText>>,
@@ -294,6 +335,34 @@ pub fn update_simulation_perf_text(
 
 /// Setup the entire mission UI hierarchy using flexbox
 pub fn setup_mission_ui(mut commands: Commands) {
+    commands
+        .spawn((
+            MissionScreenRoot,
+            MissionOutcomeBanner,
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                left: Val::Percent(0.0),
+                right: Val::Percent(0.0),
+                top: Val::Percent(38.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(20.0)),
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                MissionOutcomeText,
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(72.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+
     commands
         .spawn((
             MissionScreenRoot,
@@ -517,6 +586,11 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
         mission.name, mission.map.name
     );
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
+    commands.insert_resource(MissionObjectiveSet::from_slices(
+        mission.victory_conditions,
+        mission.defeat_conditions,
+    ));
+    commands.insert_resource(MissionOutcome::InProgress);
 
     let mut entities_by_unit_id = HashMap::new();
     let mut side_by_entity = HashMap::new();

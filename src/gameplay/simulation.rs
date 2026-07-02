@@ -23,6 +23,7 @@ impl Plugin for SimulationPlugin {
                     SimulationSet::Comms,
                     SimulationSet::Reports,
                     SimulationSet::Combat,
+                    SimulationSet::Objectives,
                     SimulationSet::Cleanup,
                 )
                     .chain()
@@ -52,6 +53,7 @@ pub enum SimulationSet {
     Sensors,
     Reports,
     Combat,
+    Objectives,
     Cleanup,
 }
 

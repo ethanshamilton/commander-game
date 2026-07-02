@@ -10,6 +10,7 @@ pub mod diagnostics;
 pub mod lifecycle;
 pub mod map;
 pub mod measurements;
+pub mod objectives;
 pub mod rendering;
 pub mod simulation;
 pub mod terrain;
@@ -22,6 +23,7 @@ use comms::CommsPlugin;
 use debug_powers::DebugPowersPlugin;
 use diagnostics::GameplayDiagnosticsPlugin;
 use lifecycle::UnitLifecyclePlugin;
+use objectives::ObjectivesPlugin;
 use rendering::GameplayRenderingPlugin;
 use simulation::SimulationPlugin;
 
@@ -36,6 +38,7 @@ impl PluginGroup for GameplayPlugins {
             .add(CommandPlugin)
             .add(CommsPlugin)
             .add(CombatPlugin)
+            .add(ObjectivesPlugin)
             .add(GameplayDiagnosticsPlugin)
             .add(GameplayRenderingPlugin)
             .add(GameplayAudioPlugin)

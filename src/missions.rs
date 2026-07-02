@@ -2,6 +2,7 @@
 
 use crate::actors::units::{Rank, Role, Side};
 use crate::gameplay::command::{CommandAssignmentDefinition, UnitId};
+use crate::gameplay::objectives::MissionCondition;
 use crate::maps::{DEMO_MAP, MapDefinition};
 
 pub struct MissionDefinition {
@@ -9,6 +10,8 @@ pub struct MissionDefinition {
     pub map: &'static MapDefinition,
     pub units: &'static [MissionUnit],
     pub command_assignments: &'static [CommandAssignmentDefinition],
+    pub victory_conditions: &'static [MissionCondition],
+    pub defeat_conditions: &'static [MissionCondition],
 }
 
 pub struct MissionUnit {
@@ -123,4 +126,6 @@ pub const DEMO_MISSION: MissionDefinition = MissionDefinition {
             superior: Some(UnitId("red_sergeant")),
         },
     ],
+    victory_conditions: &[MissionCondition::AllHostilesEliminated],
+    defeat_conditions: &[MissionCondition::AllFriendliesEliminated],
 };
