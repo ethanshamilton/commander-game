@@ -1,7 +1,6 @@
 #![doc = include_str!("../docs/commander.md")]
 #![doc = include_str!("../docs/truth_pipeline.md")]
 
-mod actions;
 mod actors;
 mod ai;
 mod gameplay;
@@ -10,6 +9,7 @@ mod maps;
 mod missions;
 mod player;
 mod screens;
+mod ui;
 
 use ai::AiPlugins;
 use bevy::gilrs::GilrsPlugin;
@@ -45,6 +45,8 @@ fn main() {
 pub enum GameState {
     MainMenu,
     #[default]
+    MissionSelect,
+    MissionBrief,
     MissionScreen,
     Settings,
 }

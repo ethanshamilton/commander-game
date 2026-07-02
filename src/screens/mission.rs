@@ -1,6 +1,5 @@
 #![doc = include_str!("../../docs/screens/mission.md")]
 
-use crate::actions::*;
 use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
 use crate::actors::weapons::Weapon;
@@ -15,12 +14,16 @@ use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
 use crate::gameplay::simulation::SimulationClock;
-use crate::missions::{DEMO_MISSION, MissionDefinition};
+use crate::missions::{MissionDefinition, SelectedMission};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
+use crate::ui::widgets::{
+    TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
+};
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
+use bevy::ui_widgets::{Activate, ValueChange, observe};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -44,6 +47,18 @@ pub struct SimulationClockText;
 
 #[derive(Component)]
 pub struct SimulationPerfText;
+
+#[derive(Component, Clone, Copy)]
+struct SpawnSoldierAction {
+    rank: Rank,
+    role: Role,
+    side: Side,
+}
+
+#[derive(Component, Clone, Copy)]
+struct MissionMenuToggle {
+    id: MenuId,
+}
 
 #[derive(Component)]
 pub struct MissionOutcomeBanner;
@@ -78,14 +93,6 @@ impl MenuState {
     pub fn set(&mut self, id: MenuId, is_open: bool) {
         self.states.insert(id, is_open);
     }
-
-    pub fn open(&mut self, id: MenuId) {
-        self.set(id, true);
-    }
-
-    pub fn close(&mut self, id: MenuId) {
-        self.set(id, false);
-    }
 }
 
 /// Menu marker component
@@ -113,7 +120,7 @@ impl Plugin for MissionScreenPlugin {
         app.insert_resource(MenuState::new())
             .add_systems(
                 OnEnter(crate::GameState::MissionScreen),
-                (setup_mission_ui, setup_demo_mission),
+                (setup_mission_ui, setup_selected_mission),
             )
             .add_systems(
                 OnExit(crate::GameState::MissionScreen),
@@ -136,6 +143,28 @@ impl Plugin for MissionScreenPlugin {
 // ============================================================================
 // SYSTEMS
 // ============================================================================
+
+fn handle_spawn_soldier_activate(
+    activate: On<Activate>,
+    mut commands: Commands,
+    actions: Query<&SpawnSoldierAction>,
+) {
+    let Ok(action) = actions.get(activate.entity) else {
+        return;
+    };
+
+    spawn_soldier(&mut commands, action.rank, action.role, action.side);
+}
+
+fn handle_mission_menu_toggle_change(
+    value_change: On<ValueChange<bool>>,
+    mut menu_state: ResMut<MenuState>,
+    toggles: Query<&MissionMenuToggle>,
+) {
+    if let Ok(toggle) = toggles.get(value_change.source) {
+        menu_state.set(toggle.id, value_change.value);
+    }
+}
 
 /// System to update menu visibility based on MenuState
 pub fn update_menu_visibility(
@@ -427,26 +456,36 @@ pub fn setup_mission_ui(mut commands: Commands) {
                     BackgroundColor(Color::srgb(0.1, 0.1, 0.1)),
                 ))
                 .with_children(|sidebar| {
-                    spawn_menu_toggle(
+                    spawn_checkbox_toggle(
                         sidebar,
-                        MenuToggleConfig {
+                        ToggleConfig {
                             label: "U".to_string(),
-                            menu_id: MenuId::Unit,
                             checked: false,
-                            width: 180.0,
-                            height: 50.0,
+                            width: Val::Px(180.0),
+                            height: Val::Px(50.0),
+                            ..default()
                         },
+                        (
+                            MissionMenuToggle { id: MenuId::Unit },
+                            observe(handle_mission_menu_toggle_change),
+                        ),
                     );
 
-                    spawn_menu_toggle(
+                    spawn_checkbox_toggle(
                         sidebar,
-                        MenuToggleConfig {
+                        ToggleConfig {
                             label: "S".to_string(),
-                            menu_id: MenuId::Settings,
                             checked: false,
-                            width: 180.0,
-                            height: 50.0,
+                            width: Val::Px(180.0),
+                            height: Val::Px(50.0),
+                            ..default()
                         },
+                        (
+                            MissionMenuToggle {
+                                id: MenuId::Settings,
+                            },
+                            observe(handle_mission_menu_toggle_change),
+                        ),
                     );
                 });
 
@@ -480,43 +519,52 @@ pub fn setup_mission_ui(mut commands: Commands) {
                             BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
                         ))
                         .with_children(|unit_bar| {
-                            spawn_button(
+                            spawn_text_button(
                                 unit_bar,
-                                ButtonConfig {
+                                TextButtonConfig {
                                     label: "Spawn Private".to_string(),
-                                    action: ClickAction::SpawnSoldier {
+                                    ..default()
+                                },
+                                (
+                                    SpawnSoldierAction {
                                         rank: Rank::Private,
                                         role: Role::Rifleman,
                                         side: Side::Blue,
                                     },
-                                    ..default()
-                                },
+                                    observe(handle_spawn_soldier_activate),
+                                ),
                             );
 
-                            spawn_button(
+                            spawn_text_button(
                                 unit_bar,
-                                ButtonConfig {
+                                TextButtonConfig {
                                     label: "Spawn Sergeant".to_string(),
-                                    action: ClickAction::SpawnSoldier {
+                                    ..default()
+                                },
+                                (
+                                    SpawnSoldierAction {
                                         rank: Rank::Sergeant,
                                         role: Role::Rifleman,
                                         side: Side::Blue,
                                     },
-                                    ..default()
-                                },
+                                    observe(handle_spawn_soldier_activate),
+                                ),
                             );
 
-                            spawn_button(
+                            spawn_text_button(
                                 unit_bar,
-                                ButtonConfig {
+                                TextButtonConfig {
                                     label: "Spawn Medic".to_string(),
-                                    action: ClickAction::SpawnSoldier {
+                                    ..default()
+                                },
+                                (
+                                    SpawnSoldierAction {
                                         rank: Rank::Private,
                                         role: Role::Medic,
                                         side: Side::Blue,
                                     },
-                                    ..default()
-                                },
+                                    observe(handle_spawn_soldier_activate),
+                                ),
                             );
                         });
                 });
@@ -576,16 +624,23 @@ pub fn cleanup_mission_scene(
     }
 }
 
-pub fn setup_demo_mission(mut commands: Commands) {
-    spawn_mission(&mut commands, &DEMO_MISSION);
+pub fn setup_selected_mission(mut commands: Commands, selected: Option<Res<SelectedMission>>) {
+    let Some(selected) = selected else {
+        panic!("MISSION DOESNT EXIST: MissionScreen entered without SelectedMission");
+    };
+
+    spawn_mission(&mut commands, selected.mission);
 }
 
 pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     info!(
-        "Spawning mission: {} on map: {}",
-        mission.name, mission.map.name
+        "Spawning mission: {} ({}) on map: {}",
+        mission.name, mission.id, mission.map.name
     );
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
+    commands.insert_resource(SimulationClock::default());
+    commands.insert_resource(PlayerTacticalKnowledge::default());
+    commands.insert_resource(SelectedUnit::default());
     commands.insert_resource(MissionObjectiveSet::from_slices(
         mission.victory_conditions,
         mission.defeat_conditions,

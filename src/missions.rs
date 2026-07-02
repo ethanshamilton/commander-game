@@ -4,9 +4,12 @@ use crate::actors::units::{Rank, Role, Side};
 use crate::gameplay::command::{CommandAssignmentDefinition, UnitId};
 use crate::gameplay::objectives::MissionCondition;
 use crate::maps::{DEMO_MAP, MapDefinition};
+use bevy::prelude::Resource;
 
 pub struct MissionDefinition {
+    pub id: &'static str,
     pub name: &'static str,
+    pub briefing: &'static str,
     pub map: &'static MapDefinition,
     pub units: &'static [MissionUnit],
     pub command_assignments: &'static [CommandAssignmentDefinition],
@@ -23,8 +26,17 @@ pub struct MissionUnit {
     pub heading_radians: f32,
 }
 
-pub const DEMO_MISSION: MissionDefinition = MissionDefinition {
-    name: "Demo Mission",
+#[derive(Resource, Clone, Copy)]
+pub struct SelectedMission {
+    pub mission: &'static MissionDefinition,
+}
+
+pub const TUTORIAL_MISSIONS: &[&MissionDefinition] = &[&SINGLE_SQUAD_COMMAND_TUTORIAL];
+
+pub const SINGLE_SQUAD_COMMAND_TUTORIAL: MissionDefinition = MissionDefinition {
+    id: "single_squad_command",
+    name: "Tutorial: Single Squad Command",
+    briefing: "Command a single squad, maintain contact with your soldiers, and eliminate all hostile units.",
     map: &DEMO_MAP,
     units: &[
         MissionUnit {

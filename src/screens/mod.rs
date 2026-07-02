@@ -2,6 +2,8 @@
 
 pub mod main_menu;
 pub mod mission;
+pub mod mission_brief;
+pub mod mission_select;
 pub mod settings;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
@@ -9,6 +11,8 @@ use bevy::prelude::*;
 
 use main_menu::MainMenuScreenPlugin;
 use mission::MissionScreenPlugin;
+use mission_brief::MissionBriefScreenPlugin;
+use mission_select::MissionSelectScreenPlugin;
 use settings::SettingsScreenPlugin;
 
 pub struct ScreensPluginGroup;
@@ -18,6 +22,8 @@ impl PluginGroup for ScreensPluginGroup {
         PluginGroupBuilder::start::<Self>()
             .add(ScreenInfrastructurePlugin)
             .add(MainMenuScreenPlugin)
+            .add(MissionSelectScreenPlugin)
+            .add(MissionBriefScreenPlugin)
             .add(MissionScreenPlugin)
             .add(SettingsScreenPlugin)
     }
