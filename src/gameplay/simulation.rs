@@ -2,7 +2,7 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Mobility, Soldier};
-use crate::gameplay::components::{BattlefieldPosition, Heading};
+use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use bevy::prelude::*;
 
 pub const SIMULATION_TICK_HZ: f64 = 20.0;

@@ -3,9 +3,9 @@
 use super::RenderingSet;
 use crate::GameState;
 use crate::actors::units::{Allegiance, Side, Soldier};
-use crate::gameplay::components::Heading;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::SimulationClock;
+use crate::gameplay::spatial::Heading;
 use crate::intel::ReportedLifeStatus;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};

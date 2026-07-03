@@ -9,11 +9,11 @@ use crate::ai::perception::{
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::command::{CommandForest, UnitIdentity};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
-use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
 use crate::gameplay::simulation::SimulationClock;
+use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::missions::{MissionDefinition, SelectedMission};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};

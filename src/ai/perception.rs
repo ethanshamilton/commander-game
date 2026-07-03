@@ -2,9 +2,9 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Allegiance, Dead, Soldier};
-use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
+use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::gameplay::terrain::TerrainHeight;
 use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;

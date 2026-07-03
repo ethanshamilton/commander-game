@@ -10,10 +10,10 @@ use crate::ai::perception::{
 };
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::{CommsGraph, VoiceComms};
-use crate::gameplay::components::{BattlefieldPosition, Heading};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::meters;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::intel::ReportedLifeStatus;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};

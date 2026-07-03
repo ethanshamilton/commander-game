@@ -19,5 +19,6 @@ Running/evergreen notes file for the project.
 - A way to model the propagation of information through the comms graph may be to model "information packets". These would be things like contact reports, commands, whatever. That gives us units of information to interact with when calculating things like encryption and interception.
   - Info packets should probably be sent at some interval. A unit wouldn't be constantly reporting where its hostile contacts are to the leader, it would report them at like, every 10 seconds or something.
 
-## NEEDS FIX
-- There are currently two notions of position, one in actors/units.rs and the other is BattlefieldPosition. Need to reconcile.
+## CONTROLS
+- Implement multi-unit select (shift-click and mouse rectangle)
+  - In order for this to be useful when working with Move orders, we need to implement basic formations.

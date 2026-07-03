@@ -50,14 +50,6 @@ pub struct Inventory {
     pub items: Vec<Item>,
 }
 
-/// Where an entity exists on the map
-#[derive(Component)]
-pub struct Position {
-    pub x: i32,
-    pub y: i32,
-    pub z: i32,
-}
-
 // STRUCTS
 
 #[derive(Debug, Clone)]

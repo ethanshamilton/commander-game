@@ -4,7 +4,6 @@ pub mod audio;
 pub mod combat;
 pub mod command;
 pub mod comms;
-pub mod components;
 pub mod debug_powers;
 pub mod diagnostics;
 pub mod lifecycle;
@@ -13,6 +12,7 @@ pub mod measurements;
 pub mod objectives;
 pub mod rendering;
 pub mod simulation;
+pub mod spatial;
 pub mod terrain;
 
 use audio::GameplayAudioPlugin;
