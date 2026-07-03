@@ -23,7 +23,11 @@ impl Plugin for CombatPlugin {
             .add_message::<ResolvedShot>()
             .add_systems(
                 FixedUpdate,
-                resolution::resolve_combat
+                (
+                    resolution::terminate_fire_orders,
+                    resolution::resolve_combat,
+                )
+                    .chain()
                     .in_set(SimulationSet::Combat)
                     .run_if(in_state(GameState::MissionScreen)),
             );

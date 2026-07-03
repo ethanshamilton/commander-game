@@ -196,6 +196,7 @@ pub fn update_selected_unit_info_panel(
         &Allegiance,
         &Health,
         &Mobility,
+        &Inventory,
         &BattlefieldPosition,
         Option<&Heading>,
         Option<&VisualSensor>,
@@ -211,8 +212,17 @@ pub fn update_selected_unit_info_panel(
         return;
     };
 
-    let Ok((soldier, allegiance, health, mobility, _position, heading, visual_sensor, memory)) =
-        units.get(entity)
+    let Ok((
+        soldier,
+        allegiance,
+        health,
+        mobility,
+        inventory,
+        _position,
+        heading,
+        visual_sensor,
+        memory,
+    )) = units.get(entity)
     else {
         panel_node.display = Display::None;
         return;
@@ -261,13 +271,14 @@ pub fn update_selected_unit_info_panel(
     };
 
     **text = format!(
-        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
+        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
         allegiance.side,
         soldier.rank,
         soldier.role,
         health.current,
         health.max,
         mobility.speed,
+        inventory.ammo_count(),
         position_m.x,
         position_m.y,
         heading_text,
@@ -715,7 +726,12 @@ pub fn spawn_soldier_at(
                 max: 100,
             },
             Mobility { speed: 1 },
-            Inventory { items: vec![] },
+            Inventory {
+                items: vec![Item {
+                    kind: ItemKind::Ammo,
+                    count: 120,
+                }],
+            },
             BattlefieldPosition(position),
             Heading(heading_radians),
             VisualSensor::default(),

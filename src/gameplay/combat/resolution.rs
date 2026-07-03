@@ -2,7 +2,7 @@ use super::CombatRng;
 use super::components::{CombatOrder, CombatState};
 use super::events::ResolvedShot;
 use crate::actors::skills::Marksmanship;
-use crate::actors::units::{Alive, Allegiance, Health, Soldier};
+use crate::actors::units::{Alive, Allegiance, Health, Inventory, Soldier};
 use crate::actors::weapons::Weapon;
 use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::lifecycle::kill_unit;
@@ -14,12 +14,64 @@ use rand::rngs::StdRng;
 
 const UNIT_RADIUS_M: f32 = 0.7;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FireOrderTermination {
+    TargetDeadOrGone,
+    ContactLost,
+    OutOfAmmo,
+    InvalidFriendlyTarget,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ShotContext<'a> {
     weapon: &'a Weapon,
     distance_m: f32,
     marksmanship: f32,
     contact_confidence: f32,
+}
+
+pub fn terminate_fire_orders(
+    clock: Res<SimulationClock>,
+    mut shooters: Query<(
+        Entity,
+        &Allegiance,
+        &Inventory,
+        &PerceptionMemory,
+        &mut CombatOrder,
+    )>,
+    targets: Query<(&Allegiance, Option<&Alive>), With<Soldier>>,
+) {
+    for (shooter, shooter_allegiance, inventory, memory, mut order) in &mut shooters {
+        let CombatOrder::FireAt { target } = *order else {
+            continue;
+        };
+
+        let termination = if target == shooter {
+            Some(FireOrderTermination::InvalidFriendlyTarget)
+        } else {
+            match targets.get(target) {
+                Ok((target_allegiance, target_alive)) => {
+                    if target_alive.is_none() {
+                        Some(FireOrderTermination::TargetDeadOrGone)
+                    } else if target_allegiance.side == shooter_allegiance.side {
+                        Some(FireOrderTermination::InvalidFriendlyTarget)
+                    } else if !inventory.has_ammo() {
+                        Some(FireOrderTermination::OutOfAmmo)
+                    } else if current_hostile_visual_contact(memory, target, clock.tick).is_none() {
+                        Some(FireOrderTermination::ContactLost)
+                    } else {
+                        None
+                    }
+                }
+                Err(_) => Some(FireOrderTermination::TargetDeadOrGone),
+            }
+        };
+
+        if let Some(reason) = termination {
+            debug!(?shooter, ?target, ?reason, "fire order terminated");
+            *order = CombatOrder::HoldFire;
+        }
+    }
 }
 
 pub fn resolve_combat(
@@ -36,6 +88,7 @@ pub fn resolve_combat(
             &mut CombatState,
             &Marksmanship,
             &CombatOrder,
+            &mut Inventory,
             &PerceptionMemory,
         ),
         (With<Soldier>, With<Alive>),
@@ -53,6 +106,7 @@ pub fn resolve_combat(
         mut combat_state,
         marksmanship,
         combat_order,
+        mut inventory,
         memory,
     ) in &mut shooters
     {
@@ -79,6 +133,10 @@ pub fn resolve_combat(
 
         let distance_m = shooter_position.0.distance(target_position.0);
         if distance_m > weapon.max_range_m || distance_m <= f32::EPSILON {
+            continue;
+        }
+
+        if !inventory.consume_ammo(1) {
             continue;
         }
 
@@ -201,6 +259,9 @@ fn point_from_circle_border(center: Vec2, toward: Vec2, radius: f32) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::units::{Item, ItemKind, Rank, Role, Side};
+    use crate::ai::perception::{Contact, ContactKind, ContactType, PerceptionMemory};
+    use crate::intel::ReportedLifeStatus;
 
     fn rifle() -> Weapon {
         Weapon::default_rifle()
@@ -213,6 +274,248 @@ mod tests {
             marksmanship: 1.0,
             contact_confidence: 1.0,
         })
+    }
+
+    fn ammo(count: u32) -> Inventory {
+        Inventory {
+            items: vec![Item {
+                kind: ItemKind::Ammo,
+                count,
+            }],
+        }
+    }
+
+    #[test]
+    fn terminate_fire_orders_keeps_valid_current_target() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock {
+            tick: 7,
+            ..default()
+        })
+        .add_systems(Update, terminate_fire_orders);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Red },
+            ))
+            .id();
+
+        let shooter = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Blue },
+                ammo(1),
+                PerceptionMemory {
+                    contacts: vec![Contact {
+                        target,
+                        last_seen_position_m: Vec2::ZERO,
+                        last_seen_time_s: 0.0,
+                        last_seen_tick: 7,
+                        confidence: 1.0,
+                        observed_life_status: ReportedLifeStatus::Alive,
+                        kind: ContactKind::Visual,
+                        contact_type: ContactType::Hostile,
+                    }],
+                },
+                CombatOrder::FireAt { target },
+            ))
+            .id();
+
+        app.update();
+
+        let order = app.world().get::<CombatOrder>(shooter).unwrap();
+        assert!(matches!(order, CombatOrder::FireAt { target: t } if *t == target));
+    }
+
+    #[test]
+    fn terminate_fire_orders_holds_when_out_of_ammo() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock {
+            tick: 7,
+            ..default()
+        })
+        .add_systems(Update, terminate_fire_orders);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Red },
+            ))
+            .id();
+
+        let shooter = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Blue },
+                ammo(0),
+                PerceptionMemory {
+                    contacts: vec![Contact {
+                        target,
+                        last_seen_position_m: Vec2::ZERO,
+                        last_seen_time_s: 0.0,
+                        last_seen_tick: 7,
+                        confidence: 1.0,
+                        observed_life_status: ReportedLifeStatus::Alive,
+                        kind: ContactKind::Visual,
+                        contact_type: ContactType::Hostile,
+                    }],
+                },
+                CombatOrder::FireAt { target },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(matches!(
+            app.world().get::<CombatOrder>(shooter).unwrap(),
+            CombatOrder::HoldFire
+        ));
+    }
+
+    #[test]
+    fn resolve_combat_consumes_one_ammo_per_shot_attempt() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock {
+            tick: 7,
+            ..default()
+        })
+        .init_resource::<CombatRng>()
+        .add_message::<ResolvedShot>()
+        .add_systems(Update, resolve_combat);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Red },
+                Health {
+                    current: 100,
+                    max: 100,
+                },
+                BattlefieldPosition(Vec2::new(10.0, 0.0)),
+            ))
+            .id();
+
+        let shooter = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Blue },
+                Health {
+                    current: 100,
+                    max: 100,
+                },
+                BattlefieldPosition(Vec2::ZERO),
+                rifle(),
+                CombatState::default(),
+                Marksmanship::default(),
+                ammo(5),
+                PerceptionMemory {
+                    contacts: vec![Contact {
+                        target,
+                        last_seen_position_m: Vec2::new(10.0, 0.0),
+                        last_seen_time_s: 0.0,
+                        last_seen_tick: 7,
+                        confidence: 1.0,
+                        observed_life_status: ReportedLifeStatus::Alive,
+                        kind: ContactKind::Visual,
+                        contact_type: ContactType::Hostile,
+                    }],
+                },
+                CombatOrder::FireAt { target },
+            ))
+            .id();
+
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Inventory>(shooter).unwrap().ammo_count(),
+            4
+        );
+    }
+
+    #[test]
+    fn terminate_fire_orders_holds_when_contact_is_not_current() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock {
+            tick: 7,
+            ..default()
+        })
+        .add_systems(Update, terminate_fire_orders);
+
+        let target = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Red },
+            ))
+            .id();
+
+        let shooter = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Blue },
+                ammo(1),
+                PerceptionMemory {
+                    contacts: vec![Contact {
+                        target,
+                        last_seen_position_m: Vec2::ZERO,
+                        last_seen_time_s: 0.0,
+                        last_seen_tick: 6,
+                        confidence: 1.0,
+                        observed_life_status: ReportedLifeStatus::Alive,
+                        kind: ContactKind::Visual,
+                        contact_type: ContactType::Hostile,
+                    }],
+                },
+                CombatOrder::FireAt { target },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(matches!(
+            app.world().get::<CombatOrder>(shooter).unwrap(),
+            CombatOrder::HoldFire
+        ));
     }
 
     #[test]
