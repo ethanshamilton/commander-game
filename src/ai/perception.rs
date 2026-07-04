@@ -15,6 +15,10 @@ const DEFAULT_AUDITORY_RANGE_M: f32 = 40.0;
 const DEFAULT_EYE_HEIGHT_M: f32 = 1.7;
 const LOS_SAMPLE_SPACING_M: f32 = 2.0;
 const LOS_TERRAIN_CLEARANCE_M: f32 = 0.1;
+/// Per-observer expensive perception checks run at 4Hz on a 20Hz sim.
+/// Cheap contact timestamp refreshes still run every tick so downstream systems
+/// can keep using `last_seen_tick == clock.tick` as the "currently perceived" flag.
+const SENSOR_SCAN_INTERVAL_TICKS: u64 = 5;
 
 pub struct PerceptionPlugin;
 
@@ -22,7 +26,12 @@ impl Plugin for PerceptionPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             FixedUpdate,
-            (update_visual_perception, update_auditory_perception)
+            (
+                stamp_sensor_changes,
+                update_visual_perception,
+                update_auditory_perception,
+            )
+                .chain()
                 .in_set(SimulationSet::Sensors)
                 .run_if(in_state(GameState::MissionScreen)),
         );
@@ -68,6 +77,21 @@ impl Default for EyeHeight {
             height_m: DEFAULT_EYE_HEIGHT_M,
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct SensorStamp {
+    /// Last simulation tick where this entity changed in a way perception cares about.
+    pub tick: u64,
+}
+
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct SensorScanState {
+    last_visual_scan_tick: Option<u64>,
+    last_visual_processed_tick: Option<u64>,
+    last_auditory_scan_tick: Option<u64>,
+    last_auditory_processed_tick: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -136,6 +160,26 @@ pub enum ContactType {
     Unknown,
 }
 
+fn stamp_sensor_changes(
+    clock: Res<SimulationClock>,
+    mut changed_units: Query<
+        &mut SensorStamp,
+        (
+            With<Soldier>,
+            Or<(
+                Changed<BattlefieldPosition>,
+                Changed<Heading>,
+                Changed<SensorSignature>,
+                Added<Dead>,
+            )>,
+        ),
+    >,
+) {
+    for mut stamp in &mut changed_units {
+        stamp.tick = clock.tick;
+    }
+}
+
 pub fn update_visual_perception(
     clock: Res<SimulationClock>,
     map: Res<BattlefieldMap>,
@@ -147,6 +191,8 @@ pub fn update_visual_perception(
             &VisualSensor,
             &EyeHeight,
             &Allegiance,
+            &SensorStamp,
+            &mut SensorScanState,
             &mut PerceptionMemory,
         ),
         (With<Soldier>, With<Alive>),
@@ -158,6 +204,7 @@ pub fn update_visual_perception(
             Option<&EyeHeight>,
             &SensorSignature,
             &Allegiance,
+            &SensorStamp,
             Option<&Dead>,
         ),
         With<Soldier>,
@@ -170,74 +217,108 @@ pub fn update_visual_perception(
         visual_sensor,
         observer_eye_height,
         observer_allegiance,
+        observer_stamp,
+        mut scan_state,
         mut memory,
     ) in &mut observers
     {
-        let observer_position_m = observer_position.0;
+        let previous_processed_tick = scan_state.last_visual_processed_tick;
+        let last_scan_tick = scan_state.last_visual_scan_tick;
+        let scan_due = last_scan_tick.is_none() || should_scan_sensor(clock.tick, observer);
+        let mut rechecked_targets = Vec::new();
 
-        for (
-            target,
-            target_position,
-            target_eye_height,
-            signature,
-            target_allegiance,
-            target_dead,
-        ) in &targets
-        {
-            if target == observer {
-                continue;
+        if scan_due {
+            let observer_changed_since_scan = last_scan_tick
+                .is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
+            let observer_position_m = observer_position.0;
+
+            for (
+                target,
+                target_position,
+                target_eye_height,
+                signature,
+                target_allegiance,
+                target_stamp,
+                target_dead,
+            ) in &targets
+            {
+                if target == observer {
+                    continue;
+                }
+
+                let target_changed_since_scan = last_scan_tick
+                    .is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
+                if !observer_changed_since_scan && !target_changed_since_scan {
+                    continue;
+                }
+
+                rechecked_targets.push(target);
+
+                if signature.visual <= 0.0 {
+                    continue;
+                }
+
+                let target_position_m = target_position.0;
+                if !is_in_visual_cone(
+                    observer_position_m,
+                    *observer_heading,
+                    target_position_m,
+                    visual_sensor,
+                ) {
+                    continue;
+                }
+
+                let target_eye_height_m = target_eye_height
+                    .map(|eye_height| eye_height.height_m)
+                    .unwrap_or(DEFAULT_EYE_HEIGHT_M);
+
+                if !has_line_of_sight(
+                    &map.terrain,
+                    observer_position_m,
+                    observer_eye_height.height_m,
+                    target_position_m,
+                    target_eye_height_m,
+                ) {
+                    continue;
+                }
+
+                upsert_contact(
+                    &mut memory,
+                    Contact {
+                        target,
+                        last_seen_position_m: target_position_m,
+                        last_seen_time_s: clock.elapsed_s,
+                        last_seen_tick: clock.tick,
+                        confidence: signature.visual.clamp(0.0, 1.0),
+                        observed_life_status: if target_dead.is_some() {
+                            ReportedLifeStatus::Dead
+                        } else {
+                            ReportedLifeStatus::Alive
+                        },
+                        kind: ContactKind::Visual,
+                        contact_type: if target_allegiance.side == observer_allegiance.side {
+                            ContactType::Friendly
+                        } else {
+                            ContactType::Hostile
+                        },
+                    },
+                );
             }
 
-            if signature.visual <= 0.0 {
-                continue;
-            }
+            scan_state.last_visual_scan_tick = Some(clock.tick);
+        }
 
-            let target_position_m = target_position.0;
-            if !is_in_visual_cone(
-                observer_position_m,
-                *observer_heading,
-                target_position_m,
-                visual_sensor,
-            ) {
-                continue;
-            }
-
-            let target_eye_height_m = target_eye_height
-                .map(|eye_height| eye_height.height_m)
-                .unwrap_or(DEFAULT_EYE_HEIGHT_M);
-
-            if !has_line_of_sight(
-                &map.terrain,
-                observer_position_m,
-                observer_eye_height.height_m,
-                target_position_m,
-                target_eye_height_m,
-            ) {
-                continue;
-            }
-
-            upsert_contact(
+        if let Some(previous_processed_tick) = previous_processed_tick {
+            refresh_current_contacts(
                 &mut memory,
-                Contact {
-                    target,
-                    last_seen_position_m: target_position_m,
-                    last_seen_time_s: clock.elapsed_s,
-                    last_seen_tick: clock.tick,
-                    confidence: signature.visual.clamp(0.0, 1.0),
-                    observed_life_status: if target_dead.is_some() {
-                        ReportedLifeStatus::Dead
-                    } else {
-                        ReportedLifeStatus::Alive
-                    },
-                    kind: ContactKind::Visual,
-                    contact_type: if target_allegiance.side == observer_allegiance.side {
-                        ContactType::Friendly
-                    } else {
-                        ContactType::Hostile
-                    },
-                },
+                ContactKind::Visual,
+                previous_processed_tick,
+                clock.tick,
+                clock.elapsed_s,
+                &rechecked_targets,
             );
         }
+        scan_state.last_visual_processed_tick = Some(clock.tick);
     }
 }
 
@@ -249,6 +330,8 @@ pub fn update_auditory_perception(
             &BattlefieldPosition,
             &AuditorySensor,
             &Allegiance,
+            &SensorStamp,
+            &mut SensorScanState,
             &mut PerceptionMemory,
         ),
         (With<Soldier>, With<Alive>),
@@ -259,48 +342,118 @@ pub fn update_auditory_perception(
             &BattlefieldPosition,
             &SensorSignature,
             &Allegiance,
+            &SensorStamp,
             Option<&Dead>,
         ),
         With<Soldier>,
     >,
 ) {
-    for (observer, observer_position, auditory_sensor, observer_allegiance, mut memory) in
-        &mut observers
+    for (
+        observer,
+        observer_position,
+        auditory_sensor,
+        observer_allegiance,
+        observer_stamp,
+        mut scan_state,
+        mut memory,
+    ) in &mut observers
     {
-        let observer_position_m = observer_position.0;
+        let previous_processed_tick = scan_state.last_auditory_processed_tick;
+        let last_scan_tick = scan_state.last_auditory_scan_tick;
+        let scan_due = last_scan_tick.is_none() || should_scan_sensor(clock.tick, observer);
+        let mut rechecked_targets = Vec::new();
 
-        for (target, target_position, signature, target_allegiance, target_dead) in &targets {
-            if target == observer || target_dead.is_some() || signature.acoustic <= 0.0 {
-                continue;
-            }
+        if scan_due {
+            let observer_changed_since_scan = last_scan_tick
+                .is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
+            let observer_position_m = observer_position.0;
 
-            let effective_range_m = auditory_sensor.range_m * signature.acoustic;
-            let target_position_m = target_position.0;
-
-            if observer_position_m.distance_squared(target_position_m)
-                > effective_range_m * effective_range_m
+            for (target, target_position, signature, target_allegiance, target_stamp, target_dead) in
+                &targets
             {
-                continue;
+                if target == observer {
+                    continue;
+                }
+
+                let target_changed_since_scan = last_scan_tick
+                    .is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
+                if !observer_changed_since_scan && !target_changed_since_scan {
+                    continue;
+                }
+
+                rechecked_targets.push(target);
+
+                if target_dead.is_some() || signature.acoustic <= 0.0 {
+                    continue;
+                }
+
+                let effective_range_m = auditory_sensor.range_m * signature.acoustic;
+                let target_position_m = target_position.0;
+
+                if observer_position_m.distance_squared(target_position_m)
+                    > effective_range_m * effective_range_m
+                {
+                    continue;
+                }
+
+                upsert_contact(
+                    &mut memory,
+                    Contact {
+                        target,
+                        last_seen_position_m: target_position_m,
+                        last_seen_time_s: clock.elapsed_s,
+                        last_seen_tick: clock.tick,
+                        confidence: signature.acoustic.clamp(0.0, 1.0),
+                        observed_life_status: ReportedLifeStatus::Alive,
+                        kind: ContactKind::Auditory,
+                        contact_type: if target_allegiance.side == observer_allegiance.side {
+                            ContactType::Friendly
+                        } else {
+                            ContactType::Hostile
+                        },
+                    },
+                );
             }
 
-            upsert_contact(
+            scan_state.last_auditory_scan_tick = Some(clock.tick);
+        }
+
+        if let Some(previous_processed_tick) = previous_processed_tick {
+            refresh_current_contacts(
                 &mut memory,
-                Contact {
-                    target,
-                    last_seen_position_m: target_position_m,
-                    last_seen_time_s: clock.elapsed_s,
-                    last_seen_tick: clock.tick,
-                    confidence: signature.acoustic.clamp(0.0, 1.0),
-                    observed_life_status: ReportedLifeStatus::Alive,
-                    kind: ContactKind::Auditory,
-                    contact_type: if target_allegiance.side == observer_allegiance.side {
-                        ContactType::Friendly
-                    } else {
-                        ContactType::Hostile
-                    },
-                },
+                ContactKind::Auditory,
+                previous_processed_tick,
+                clock.tick,
+                clock.elapsed_s,
+                &rechecked_targets,
             );
         }
+        scan_state.last_auditory_processed_tick = Some(clock.tick);
+    }
+}
+
+fn should_scan_sensor(tick: u64, observer: Entity) -> bool {
+    (tick + observer.index().index() as u64) % SENSOR_SCAN_INTERVAL_TICKS == 0
+}
+
+fn refresh_current_contacts(
+    memory: &mut PerceptionMemory,
+    kind: ContactKind,
+    previous_processed_tick: u64,
+    current_tick: u64,
+    current_time_s: f32,
+    rechecked_targets: &[Entity],
+) {
+    for contact in &mut memory.contacts {
+        if contact.kind != kind
+            || contact.last_seen_tick != previous_processed_tick
+            || rechecked_targets.contains(&contact.target)
+        {
+            continue;
+        }
+
+        contact.last_seen_tick = current_tick;
+        contact.last_seen_time_s = current_time_s;
     }
 }
 

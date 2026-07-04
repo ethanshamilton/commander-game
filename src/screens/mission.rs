@@ -4,7 +4,8 @@ use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
 use crate::actors::weapons::Weapon;
 use crate::ai::perception::{
-    AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
+    AuditorySensor, EyeHeight, PerceptionMemory, SensorScanState, SensorSignature, SensorStamp,
+    VisualSensor,
 };
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::command::{CommandForest, UnitIdentity};
@@ -23,6 +24,7 @@ use crate::ui::widgets::{
 };
 use bevy::camera::visibility::Visibility;
 use bevy::prelude::*;
+use bevy::picking::events::{Click, Pointer};
 use bevy::ui_widgets::{Activate, ValueChange, observe};
 use std::collections::HashMap;
 
@@ -47,6 +49,12 @@ pub struct SimulationClockText;
 
 #[derive(Component)]
 pub struct SimulationPerfText;
+
+#[derive(Component)]
+pub struct SimulationPerfBreakdownPanel;
+
+#[derive(Component)]
+pub struct SimulationPerfBreakdownText;
 
 #[derive(Component, Clone, Copy)]
 struct SpawnSoldierAction {
@@ -133,6 +141,7 @@ impl Plugin for MissionScreenPlugin {
                     update_selected_unit_info_panel,
                     update_simulation_clock_text,
                     update_simulation_perf_text,
+                    update_simulation_perf_breakdown,
                     update_mission_outcome_banner,
                 )
                     .run_if(in_state(crate::GameState::MissionScreen)),
@@ -373,6 +382,62 @@ pub fn update_simulation_perf_text(
     });
 }
 
+/// Toggle the per-phase perf breakdown when the diagnostics box is clicked.
+fn handle_perf_panel_click(
+    _click: On<Pointer<Click>>,
+    mut panel_query: Query<&mut Node, With<SimulationPerfBreakdownPanel>>,
+) {
+    let Ok(mut node) = panel_query.single_mut() else {
+        return;
+    };
+
+    node.display = match node.display {
+        Display::None => Display::Flex,
+        _ => Display::None,
+    };
+}
+
+pub fn update_simulation_perf_breakdown(
+    perf: Res<SimulationPerf>,
+    panel_query: Query<&Node, With<SimulationPerfBreakdownPanel>>,
+    mut text_query: Query<&mut Text, With<SimulationPerfBreakdownText>>,
+) {
+    if !perf.is_changed() {
+        return;
+    }
+
+    // Skip formatting while hidden.
+    let Ok(panel_node) = panel_query.single() else {
+        return;
+    };
+    if panel_node.display == Display::None {
+        return;
+    }
+
+    let Ok(mut text) = text_query.single_mut() else {
+        return;
+    };
+
+    let phases = perf.phases_by_cost();
+    let max_s = phases.first().map(|(_, s)| *s).unwrap_or(0.0).max(f32::EPSILON);
+    let total_s: f32 = phases.iter().map(|(_, s)| s).sum::<f32>().max(f32::EPSILON);
+
+    let mut lines = String::new();
+    for (name, ema_s) in &phases {
+        let filled = ((ema_s / max_s) * 10.0).round().clamp(0.0, 10.0) as usize;
+        let bar = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+        lines.push_str(&format!(
+            "{:<10} {:>6.2}ms [{}] {:>3.0}%\n",
+            name,
+            ema_s * 1000.0,
+            bar,
+            (ema_s / total_s) * 100.0,
+        ));
+    }
+
+    **text = lines;
+}
+
 /// Setup the entire mission UI hierarchy using flexbox
 pub fn setup_mission_ui(mut commands: Commands) {
     commands
@@ -417,6 +482,10 @@ pub fn setup_mission_ui(mut commands: Commands) {
                 ..default()
             },
             BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.75)),
+            // Lift above the full-screen root container so this box both renders
+            // and receives pointer picks on top of it.
+            GlobalZIndex(10),
+            observe(handle_perf_panel_click),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -438,6 +507,29 @@ pub fn setup_mission_ui(mut commands: Commands) {
                 },
                 TextColor(Color::srgb(0.7, 1.0, 0.7)),
             ));
+
+            // Per-phase breakdown, hidden until the diagnostics box is clicked.
+            parent
+                .spawn((
+                    SimulationPerfBreakdownPanel,
+                    Node {
+                        display: Display::None,
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        SimulationPerfBreakdownText,
+                        Text::new(""),
+                        TextFont {
+                            font_size: FontSize::Px(13.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.85, 0.85, 0.85)),
+                    ));
+                });
         });
 
     // Root flex container (fills screen, horizontal layout)
@@ -745,6 +837,8 @@ pub fn spawn_soldier_at(
             Marksmanship::default(),
             CombatOrder::HoldFire,
             PerceptionMemory::default(),
+            SensorStamp::default(),
+            SensorScanState::default(),
             VoiceComms::default(),
             CommsLinks::default(),
         ))
