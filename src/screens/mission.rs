@@ -3,6 +3,8 @@
 use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
 use crate::actors::weapons::Weapon;
+use crate::ai::htn::executor::Autonomous;
+use crate::ai::htn::trace::DecisionTrace;
 use crate::ai::perception::{
     AuditorySensor, EyeHeight, PerceptionMemory, SensorScanState, SensorSignature, SensorStamp,
     VisualSensor,
@@ -773,6 +775,12 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
 
         if unit.side == Side::Blue && matches!(unit.rank, Rank::Sergeant) {
             commands.entity(entity).insert(PlayerControlledUnit);
+        }
+
+        if unit.side == Side::Red {
+            commands
+                .entity(entity)
+                .insert((Autonomous, DecisionTrace::default()));
         }
     }
 

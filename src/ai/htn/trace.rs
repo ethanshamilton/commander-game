@@ -51,7 +51,7 @@ pub enum TraceEvent {
     PlanCreated {
         root: &'static str,
         mtr: Mtr,
-        steps: Vec<&'static str>,
+        steps: Vec<String>,
     },
     PlanRejected {
         reason: PlanRejectionReason,
@@ -59,6 +59,7 @@ pub enum TraceEvent {
     StepStarted {
         task: &'static str,
         why: &'static str,
+        operator: String,
     },
     StepFailed {
         task: &'static str,

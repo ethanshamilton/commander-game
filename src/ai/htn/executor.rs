@@ -50,6 +50,12 @@ pub struct RecentResolvedShots {
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct Autonomous;
 
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct HtnIssuedUnitOrder;
+
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct HtnIssuedCombatOrder;
+
 #[derive(Component, Debug, Clone)]
 pub struct PlanRunner {
     pub plan: Plan,
@@ -119,6 +125,7 @@ pub fn deliberate_autonomous_units(
             &PerceptionMemory,
             Option<&AuditorySensor>,
             Option<&UnitOrder>,
+            Option<&HtnIssuedUnitOrder>,
             Option<&mut PlanRunner>,
             &mut DecisionTrace,
         ),
@@ -137,6 +144,7 @@ pub fn deliberate_autonomous_units(
         memory,
         auditory_sensor,
         current_order,
+        htn_unit_order,
         runner,
         mut trace,
     ) in &mut units
@@ -178,6 +186,7 @@ pub fn deliberate_autonomous_units(
                 trace.push(TraceEvent::Replanned {
                     trigger: ReplanTrigger::RelevantStateChanged,
                 });
+                clear_htn_orders(&mut commands, entity);
                 trace_plan_created(&mut trace, domain.root, domain, &candidate);
                 *runner = PlanRunner {
                     plan: candidate,
@@ -187,7 +196,7 @@ pub fn deliberate_autonomous_units(
                 };
             }
             None => {
-                if current_order.is_some() {
+                if current_order.is_some() && htn_unit_order.is_none() {
                     trace.push(TraceEvent::PlanRejected {
                         reason: PlanRejectionReason::ExternalOrderActive,
                     });
@@ -230,6 +239,8 @@ pub fn start_pending_steps(
             Option<&AuditorySensor>,
             Option<&UnitOrder>,
             Option<&CombatOrder>,
+            Option<&HtnIssuedUnitOrder>,
+            Option<&HtnIssuedCombatOrder>,
             &mut PlanRunner,
             &mut DecisionTrace,
         ),
@@ -244,7 +255,9 @@ pub fn start_pending_steps(
         memory,
         auditory_sensor,
         current_order,
-        _combat_order,
+        combat_order,
+        htn_unit_order,
+        htn_combat_order,
         mut runner,
         mut trace,
     ) in &mut units
@@ -255,15 +268,22 @@ pub fn start_pending_steps(
 
         if runner.current >= runner.plan.steps.len() {
             trace.push(TraceEvent::PlanCompleted);
+            clear_htn_orders(&mut commands, entity);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
 
         let step = &runner.plan.steps[runner.current];
-        if current_order.is_some() {
+        if has_external_order(
+            current_order,
+            htn_unit_order,
+            combat_order,
+            htn_combat_order,
+        ) {
             trace.push(TraceEvent::PlanRejected {
                 reason: PlanRejectionReason::ExternalOrderActive,
             });
+            clear_htn_orders(&mut commands, entity);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
@@ -290,25 +310,29 @@ pub fn start_pending_steps(
 
         match step.operator {
             BoundOperator::Hold => {
-                commands
-                    .entity(entity)
-                    .insert((UnitOrder::Hold, CombatOrder::HoldFire));
+                commands.entity(entity).insert((
+                    UnitOrder::Hold,
+                    CombatOrder::HoldFire,
+                    HtnIssuedUnitOrder,
+                    HtnIssuedCombatOrder,
+                ));
             }
             BoundOperator::MoveTo { destination_m } => {
                 commands
                     .entity(entity)
-                    .insert(UnitOrder::MoveTo { destination_m });
+                    .insert((UnitOrder::MoveTo { destination_m }, HtnIssuedUnitOrder));
             }
             BoundOperator::FireAt { target } => {
                 commands
                     .entity(entity)
-                    .insert(CombatOrder::FireAt { target });
+                    .insert((CombatOrder::FireAt { target }, HtnIssuedCombatOrder));
             }
         }
 
         trace.push(TraceEvent::StepStarted {
             task: step.task_name,
-            why: "primitive preconditions satisfied",
+            why: step.reason,
+            operator: step.operator.describe(),
         });
         runner.step_state = StepState::Running;
     }
@@ -353,6 +377,7 @@ pub fn advance_plan_execution(
 
         if runner.current >= runner.plan.steps.len() {
             trace.push(TraceEvent::PlanCompleted);
+            clear_htn_orders(&mut commands, entity);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
@@ -382,6 +407,7 @@ pub fn advance_plan_execution(
                 runner.current += 1;
                 if runner.current >= runner.plan.steps.len() {
                     trace.push(TraceEvent::PlanCompleted);
+                    clear_htn_orders(&mut commands, entity);
                     commands.entity(entity).remove::<PlanRunner>();
                 } else {
                     runner.step_state = StepState::Pending;
@@ -392,6 +418,7 @@ pub fn advance_plan_execution(
                     task: step.task_name,
                     failed_condition: reason,
                 });
+                clear_htn_orders(&mut commands, entity);
                 commands.entity(entity).remove::<PlanRunner>();
             }
         }
@@ -449,11 +476,33 @@ fn poll_fire(
     }
 }
 
+fn has_external_order(
+    unit_order: Option<&UnitOrder>,
+    htn_unit_order: Option<&HtnIssuedUnitOrder>,
+    combat_order: Option<&CombatOrder>,
+    htn_combat_order: Option<&HtnIssuedCombatOrder>,
+) -> bool {
+    let external_unit_order = unit_order.is_some() && htn_unit_order.is_none();
+    let external_combat_order =
+        matches!(combat_order, Some(CombatOrder::FireAt { .. })) && htn_combat_order.is_none();
+
+    external_unit_order || external_combat_order
+}
+
+fn clear_htn_orders(commands: &mut Commands, entity: Entity) {
+    commands
+        .entity(entity)
+        .remove::<UnitOrder>()
+        .remove::<CombatOrder>()
+        .remove::<HtnIssuedUnitOrder>()
+        .remove::<HtnIssuedCombatOrder>();
+}
+
 fn trace_plan_created(trace: &mut DecisionTrace, root: TaskId, domain: &Domain, plan: &Plan) {
     trace.push(TraceEvent::PlanCreated {
         root: domain.task_name(root).unwrap_or("<unknown>"),
         mtr: plan.mtr.clone(),
-        steps: plan.steps.iter().map(|step| step.task_name).collect(),
+        steps: plan.steps.iter().map(|step| step.describe()).collect(),
     });
 }
 

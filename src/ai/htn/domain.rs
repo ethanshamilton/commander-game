@@ -17,6 +17,7 @@ pub enum Task {
 #[derive(Clone)]
 pub struct PrimitiveTask {
     pub name: &'static str,
+    pub reason: &'static str,
     pub preconditions: ConditionFn,
     pub bind: OperatorBindingFn,
     pub effects: EffectFn,
@@ -41,6 +42,18 @@ pub enum BoundOperator {
     Hold,
     MoveTo { destination_m: Vec2 },
     FireAt { target: Entity },
+}
+
+impl BoundOperator {
+    pub fn describe(&self) -> String {
+        match self {
+            BoundOperator::Hold => "hold position / hold fire".to_string(),
+            BoundOperator::MoveTo { destination_m } => {
+                format!("move to ({:.1}, {:.1})m", destination_m.x, destination_m.y)
+            }
+            BoundOperator::FireAt { target } => format!("fire at {target:?}"),
+        }
+    }
 }
 
 pub struct Domain {
@@ -78,9 +91,27 @@ impl DomainBuilder {
         bind: OperatorBindingFn,
         effects: EffectFn,
     ) -> TaskId {
+        self.primitive_with_reason(
+            name,
+            "selected by HTN decomposition",
+            preconditions,
+            bind,
+            effects,
+        )
+    }
+
+    pub fn primitive_with_reason(
+        &mut self,
+        name: &'static str,
+        reason: &'static str,
+        preconditions: ConditionFn,
+        bind: OperatorBindingFn,
+        effects: EffectFn,
+    ) -> TaskId {
         let id = TaskId(self.tasks.len());
         self.tasks.push(Task::Primitive(PrimitiveTask {
             name,
+            reason,
             preconditions,
             bind,
             effects,

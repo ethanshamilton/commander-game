@@ -13,10 +13,7 @@ impl Plan {
         let mut lines = vec![format!("MTR {:?}", self.mtr.0)];
 
         for (index, step) in self.steps.iter().enumerate() {
-            lines.push(format!(
-                "{index}: {} [{:?}] -> {:?}",
-                step.task_name, step.task, step.operator
-            ));
+            lines.push(format!("{index}: {}", step.describe()));
         }
 
         lines.join("\n")
@@ -27,8 +24,20 @@ impl Plan {
 pub struct BoundStep {
     pub task: TaskId,
     pub task_name: &'static str,
+    pub reason: &'static str,
     pub operator: BoundOperator,
     pub preconditions: ConditionFn,
+}
+
+impl BoundStep {
+    pub fn describe(&self) -> String {
+        format!(
+            "{} [{:?}] -> {}",
+            self.task_name,
+            self.task,
+            self.operator.describe()
+        )
+    }
 }
 
 /// Method traversal record.
@@ -87,6 +96,7 @@ fn decompose_task(
             steps.push(BoundStep {
                 task: task_id,
                 task_name: primitive.name,
+                reason: primitive.reason,
                 operator,
                 preconditions: primitive.preconditions,
             });
@@ -161,7 +171,7 @@ mod tests {
         let description = plan.describe();
 
         assert!(description.contains("MTR []"));
-        assert!(description.contains("0: Hold [TaskId(0)] -> Hold"));
+        assert!(description.contains("0: Hold [TaskId(0)] -> hold position / hold fire"));
     }
 
     #[test]

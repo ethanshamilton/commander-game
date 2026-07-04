@@ -2,6 +2,7 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Allegiance, Soldier};
+use crate::ai::htn::executor::{HtnIssuedCombatOrder, HtnIssuedUnitOrder};
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::CommsGraph;
@@ -159,13 +160,17 @@ fn issue_contextual_order(
     {
         commands
             .entity(entity)
+            .remove::<HtnIssuedCombatOrder>()
             .insert(CombatOrder::FireAt { target });
         return;
     }
 
-    commands.entity(entity).insert(UnitOrder::MoveTo {
-        destination_m: world_position.map(to_meters),
-    });
+    commands
+        .entity(entity)
+        .remove::<HtnIssuedUnitOrder>()
+        .insert(UnitOrder::MoveTo {
+            destination_m: world_position.map(to_meters),
+        });
 }
 
 fn hostile_unit_at_cursor(
