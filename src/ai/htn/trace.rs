@@ -41,11 +41,13 @@ impl DecisionTrace {
         self.events.iter()
     }
 
+    #[allow(dead_code)]
     pub fn latest(&self) -> Option<&TraceEvent> {
         self.events.back()
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum TraceEvent {
     PlanCreated {
@@ -71,6 +73,7 @@ pub enum TraceEvent {
     PlanCompleted,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplanTrigger {
     NoPlan,

@@ -81,7 +81,7 @@ impl Default for SimulationClock {
 }
 
 #[allow(dead_code)]
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub enum UnitOrder {
     MoveTo { destination_m: Vec2 },
     Hold,

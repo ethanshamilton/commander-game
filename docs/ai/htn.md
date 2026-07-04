@@ -13,4 +13,4 @@ This layer is intentionally split into a pure planning core and ECS adapters:
 
 Primitive tasks bind abstract actions into `BoundOperator`s at plan time. For example, `FireAtNearestHostile` can bind to `BoundOperator::FireAt { target }` only when the planner state contains a hostile belief. This keeps doctrine-level task names separate from concrete execution orders.
 
-The pure planner does not execute actions. Later executor systems translate `BoundOperator`s into existing gameplay components such as `UnitOrder` and `CombatOrder`.
+The pure planner does not execute actions. Executor systems translate `BoundOperator`s into existing gameplay components such as `UnitOrder` and `CombatOrder`, track exactly which orders HTN issued, and preserve externally replaced player orders. Replanning is MTR-gated, with equal-MTR plans adopted only when their bound operators differ.

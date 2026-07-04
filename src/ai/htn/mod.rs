@@ -1,6 +1,4 @@
 #![doc = include_str!("../../../docs/ai/htn.md")]
-#![allow(dead_code)]
-
 pub mod domain;
 pub mod executor;
 pub mod planner;

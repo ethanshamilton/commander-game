@@ -5,7 +5,7 @@ pub struct CombatState {
     pub next_fire_tick: u64,
 }
 
-#[derive(Component, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CombatOrder {
     FireAt { target: Entity },
     HoldFire,

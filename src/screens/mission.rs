@@ -6,8 +6,7 @@ use crate::actors::weapons::Weapon;
 use crate::ai::htn::executor::Autonomous;
 use crate::ai::htn::trace::DecisionTrace;
 use crate::ai::perception::{
-    AuditorySensor, EyeHeight, PerceptionMemory, SensorScanState, SensorSignature, SensorStamp,
-    VisualSensor,
+    AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
 };
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::command::{CommandForest, UnitIdentity};
@@ -849,8 +848,6 @@ pub fn spawn_soldier_at(
             Marksmanship::default(),
             CombatOrder::HoldFire,
             PerceptionMemory::default(),
-            SensorStamp::default(),
-            SensorScanState::default(),
             VoiceComms::default(),
             CommsLinks::default(),
         ))

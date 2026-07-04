@@ -127,12 +127,60 @@ impl DomainBuilder {
     }
 
     pub fn build(self, root: TaskId) -> Domain {
-        debug_assert!(root.0 < self.tasks.len(), "domain root task does not exist");
+        validate_domain(&self.tasks, root);
         Domain {
             tasks: self.tasks,
             root,
         }
     }
+}
+
+fn validate_domain(tasks: &[Task], root: TaskId) {
+    assert!(root.0 < tasks.len(), "domain root task does not exist");
+
+    for (task_index, task) in tasks.iter().enumerate() {
+        let Task::Compound(compound) = task else {
+            continue;
+        };
+
+        for method in &compound.methods {
+            for subtask in &method.subtasks {
+                assert!(
+                    subtask.0 < tasks.len(),
+                    "domain task {task_index} method {} references missing subtask {:?}",
+                    method.name,
+                    subtask
+                );
+            }
+        }
+    }
+
+    let mut visiting = vec![false; tasks.len()];
+    let mut visited = vec![false; tasks.len()];
+    detect_cycle(tasks, root, &mut visiting, &mut visited);
+}
+
+fn detect_cycle(tasks: &[Task], task_id: TaskId, visiting: &mut [bool], visited: &mut [bool]) {
+    if visited[task_id.0] {
+        return;
+    }
+
+    assert!(
+        !visiting[task_id.0],
+        "domain contains a task cycle at {task_id:?}"
+    );
+    visiting[task_id.0] = true;
+
+    if let Task::Compound(compound) = &tasks[task_id.0] {
+        for method in &compound.methods {
+            for subtask in &method.subtasks {
+                detect_cycle(tasks, *subtask, visiting, visited);
+            }
+        }
+    }
+
+    visiting[task_id.0] = false;
+    visited[task_id.0] = true;
 }
 
 pub fn always(_state: &PlannerState) -> bool {
@@ -173,4 +221,47 @@ pub fn bind_move_30m_away_from_nearest_hostile(state: &PlannerState) -> Option<B
     Some(BoundOperator::MoveTo {
         destination_m: state.position_m + away * 30.0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "domain root task does not exist")]
+    fn build_rejects_missing_root() {
+        DomainBuilder::new().build(TaskId(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "references missing subtask")]
+    fn build_rejects_missing_subtask() {
+        let mut builder = DomainBuilder::new();
+        let root = builder.compound(
+            "Root",
+            vec![Method {
+                name: "Bad",
+                preconditions: always,
+                subtasks: vec![TaskId(99)],
+            }],
+        );
+
+        builder.build(root);
+    }
+
+    #[test]
+    #[should_panic(expected = "domain contains a task cycle")]
+    fn build_rejects_task_cycles() {
+        let mut builder = DomainBuilder::new();
+        let root = builder.compound(
+            "Root",
+            vec![Method {
+                name: "Self",
+                preconditions: always,
+                subtasks: vec![TaskId(0)],
+            }],
+        );
+
+        builder.build(root);
+    }
 }

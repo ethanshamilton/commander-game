@@ -6,7 +6,7 @@ use super::state::PlannerState;
 use crate::ai::perception::ContactKind;
 
 const LOW_HEALTH_FRAC: f32 = 0.35;
-const FRESH_CONTACT_TICKS: u64 = 1;
+pub(crate) const FRESH_CONTACT_TICKS: u64 = 1;
 const RECENT_CONTACT_TICKS: u64 = 100;
 const MIN_ENGAGE_CONFIDENCE: f32 = 0.25;
 const RETREAT_DISTANCE_M: f32 = 30.0;
