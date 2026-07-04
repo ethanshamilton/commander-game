@@ -228,8 +228,8 @@ pub fn update_visual_perception(
         let mut rechecked_targets = Vec::new();
 
         if scan_due {
-            let observer_changed_since_scan = last_scan_tick
-                .is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
+            let observer_changed_since_scan =
+                last_scan_tick.is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
             let observer_position_m = observer_position.0;
 
             for (
@@ -246,8 +246,8 @@ pub fn update_visual_perception(
                     continue;
                 }
 
-                let target_changed_since_scan = last_scan_tick
-                    .is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
+                let target_changed_since_scan =
+                    last_scan_tick.is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
                 if !observer_changed_since_scan && !target_changed_since_scan {
                     continue;
                 }
@@ -364,19 +364,25 @@ pub fn update_auditory_perception(
         let mut rechecked_targets = Vec::new();
 
         if scan_due {
-            let observer_changed_since_scan = last_scan_tick
-                .is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
+            let observer_changed_since_scan =
+                last_scan_tick.is_none_or(|last_scan_tick| observer_stamp.tick > last_scan_tick);
             let observer_position_m = observer_position.0;
 
-            for (target, target_position, signature, target_allegiance, target_stamp, target_dead) in
-                &targets
+            for (
+                target,
+                target_position,
+                signature,
+                target_allegiance,
+                target_stamp,
+                target_dead,
+            ) in &targets
             {
                 if target == observer {
                     continue;
                 }
 
-                let target_changed_since_scan = last_scan_tick
-                    .is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
+                let target_changed_since_scan =
+                    last_scan_tick.is_none_or(|last_scan_tick| target_stamp.tick > last_scan_tick);
                 if !observer_changed_since_scan && !target_changed_since_scan {
                     continue;
                 }

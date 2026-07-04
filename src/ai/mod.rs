@@ -4,12 +4,15 @@ pub mod htn;
 pub mod perception;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
+use htn::HtnPlugin;
 use perception::PerceptionPlugin;
 
 pub struct AiPlugins;
 
 impl PluginGroup for AiPlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(PerceptionPlugin)
+        PluginGroupBuilder::start::<Self>()
+            .add(PerceptionPlugin)
+            .add(HtnPlugin)
     }
 }

@@ -52,6 +52,13 @@ impl Domain {
     pub fn task(&self, id: TaskId) -> Option<&Task> {
         self.tasks.get(id.0)
     }
+
+    pub fn task_name(&self, id: TaskId) -> Option<&'static str> {
+        match self.task(id)? {
+            Task::Primitive(task) => Some(task.name),
+            Task::Compound(task) => Some(task.name),
+        }
+    }
 }
 
 #[derive(Default)]

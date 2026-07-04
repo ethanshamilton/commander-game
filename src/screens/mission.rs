@@ -23,8 +23,8 @@ use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
 };
 use bevy::camera::visibility::Visibility;
-use bevy::prelude::*;
 use bevy::picking::events::{Click, Pointer};
+use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, ValueChange, observe};
 use std::collections::HashMap;
 
@@ -419,7 +419,11 @@ pub fn update_simulation_perf_breakdown(
     };
 
     let phases = perf.phases_by_cost();
-    let max_s = phases.first().map(|(_, s)| *s).unwrap_or(0.0).max(f32::EPSILON);
+    let max_s = phases
+        .first()
+        .map(|(_, s)| *s)
+        .unwrap_or(0.0)
+        .max(f32::EPSILON);
     let total_s: f32 = phases.iter().map(|(_, s)| s).sum::<f32>().max(f32::EPSILON);
 
     let mut lines = String::new();

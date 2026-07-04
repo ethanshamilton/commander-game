@@ -17,12 +17,13 @@ pub const PHASE_NAMES: [&str; PHASE_COUNT] = [
     "Sensors",
     "Comms",
     "Reports",
+    "Thinking",
     "Combat",
     "Objectives",
     "Cleanup",
 ];
 
-pub const PHASE_COUNT: usize = 9;
+pub const PHASE_COUNT: usize = 10;
 
 pub struct GameplayDiagnosticsPlugin;
 
@@ -49,11 +50,14 @@ impl Plugin for GameplayDiagnosticsPlugin {
                     .before(SimulationSet::Reports),
                 phase_boundary(5)
                     .after(SimulationSet::Reports)
-                    .before(SimulationSet::Combat),
+                    .before(SimulationSet::Thinking),
                 phase_boundary(6)
+                    .after(SimulationSet::Thinking)
+                    .before(SimulationSet::Combat),
+                phase_boundary(7)
                     .after(SimulationSet::Combat)
                     .before(SimulationSet::Objectives),
-                phase_boundary(7)
+                phase_boundary(8)
                     .after(SimulationSet::Objectives)
                     .before(SimulationSet::Cleanup),
                 end_simulation_tick.after(SimulationSet::Cleanup),
