@@ -1,5 +1,6 @@
 #![doc = include_str!("../../docs/ai.md")]
 
+pub mod htn;
 pub mod perception;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};

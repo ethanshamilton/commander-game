@@ -12,7 +12,7 @@ The pieces already in place map cleanly onto HTN roles:
 | HTN concept        | Existing code                                             |
 |--------------------|-----------------------------------------------------------|
 | Sensors            | `ai/perception.rs` → `PerceptionMemory`                   |
-| World state source | `PerceptionMemory`, `Health`, `Inventory`, position, etc. |
+| Planner state source | `PerceptionMemory`, `Health`, `Inventory`, position, etc. |
 | Operators          | `UnitOrder::{MoveTo, Hold}`, `CombatOrder::{FireAt, HoldFire}` |
 | Execution substrate| `move_units`, `resolve_combat` in the fixed-tick sim      |
 
@@ -25,7 +25,7 @@ Data flow per tick:
 
 ```text
 PerceptionMemory + self components
-    -> [synthesize] WorldState snapshot
+    -> [synthesize] PlannerState snapshot
     -> [planner, event-driven] Plan
     -> [executor, every tick] UnitOrder / CombatOrder components
     -> existing movement/combat systems
@@ -36,7 +36,8 @@ PerceptionMemory + self components
 ```text
 src/ai/htn/
   mod.rs         HtnPlugin, plumbing
-  world_state.rs WorldState struct + synthesis from ECS
+  state.rs       PlannerState struct
+  synthesis.rs   synthesis from ECS
   domain.rs      Task/Method/Domain types, DomainBuilder
   planner.rs     DFS decomposition, MTR — pure, no ECS deps
   executor.rs    PlanRunner component, step lifecycle, operator dispatch
@@ -44,18 +45,18 @@ src/ai/htn/
   soldier.rs     the v1 soldier domain definition
 ```
 
-`planner.rs` and `domain.rs` must stay ECS-free (operate on `WorldState` only)
+`planner.rs` and `domain.rs` must stay ECS-free (operate on `PlannerState` only)
 so they're unit-testable without spinning up an `App`.
 
 ## Core types (v1 decisions)
 
-### WorldState
+### PlannerState
 
 A plain compact struct, **not** a key-value map. Cheap to `Clone` (the planner
 copies it to simulate effects), explicit fields, compiler-checked conditions:
 
 ```rust
-pub struct WorldState {
+pub struct PlannerState {
     pub position_m: Vec2,
     pub health_frac: f32,
     pub has_ammo: bool,
@@ -67,16 +68,16 @@ pub struct WorldState {
 ```
 
 Synthesized fresh from components each deliberation pass. Map-based/data-driven
-world state is a later refactor if/when domains become data (societies); don't
+planner state is a later refactor if/when domains become data (societies); don't
 pay that cost now.
 
 ### Domain
 
 Static structure, built once at startup, shared by all soldiers (a `Resource`):
 
-- `PrimitiveTask { name, operator: OperatorSpec, preconditions: fn(&WorldState) -> bool, effects: fn(&mut WorldState) }`
+- `PrimitiveTask { name, operator: OperatorSpec, preconditions: fn(&PlannerState) -> bool, effects: fn(&mut PlannerState) }`
 - `CompoundTask { name, methods: Vec<Method> }`
-- `Method { preconditions: fn(&WorldState) -> bool, subtasks: Vec<TaskId> }`
+- `Method { preconditions: fn(&PlannerState) -> bool, subtasks: Vec<TaskId> }`
 - `Domain { tasks: Vec<Task>, root: TaskId }`
 
 Conditions/effects as plain `fn` pointers for v1 — fast, simple, testable.
@@ -86,7 +87,7 @@ parameterization lives — keep methods ordered deliberately, document each).
 Operator parameters (e.g. destination for MoveTo) are resolved from the world
 state at *plan time* and stored bound into the plan step. v1 has no general
 unification — each operator spec knows how to extract its params from
-`WorldState` (e.g. `MoveAwayFromNearestHostile` computes its own destination).
+`PlannerState` (e.g. `MoveAwayFromNearestHostile` computes its own destination).
 
 ### Planner
 
@@ -117,7 +118,7 @@ pub struct PlanRunner {
 
 Step lifecycle each tick:
 
-1. If `Pending`: check step precondition against a fresh `WorldState`. Valid →
+1. If `Pending`: check step precondition against a fresh `PlannerState`. Valid →
    dispatch operator (insert `UnitOrder`/`CombatOrder`), mark `Running`.
    Invalid → plan failed, request replan.
 2. If `Running`: poll completion. `MoveTo` completion signal already exists —
@@ -127,7 +128,7 @@ Step lifecycle each tick:
 3. On success: advance to next step; on plan exhaustion, request replan.
 
 Replan triggers: no plan · plan completed · step failed · world-state change
-(MTR-gated). v1 "relevant change" detection: re-synthesize `WorldState` each
+(MTR-gated). v1 "relevant change" detection: re-synthesize `PlannerState` each
 deliberation pass and compare a small digest of decision-relevant fields
 (hostile presence, health band, ammo) — no event infrastructure yet.
 
@@ -199,10 +200,10 @@ Four methods, ~5 primitives. Method order encodes the standing-goal stack from
 
 Each lands independently with tests:
 
-- **M1 — pure planner.** `domain.rs` + `planner.rs` + `world_state.rs` (struct
+- **M1 — pure planner.** `domain.rs` + `planner.rs` + `state.rs` (struct
   only). Unit tests: hand-built domains, assert plans + MTR ordering + no valid
   plan cases. Zero ECS.
-- **M2 — world-state synthesis.** System building `WorldState` from
+- **M2 — world-state synthesis.** System building `PlannerState` from
   `PerceptionMemory`/`Health`/`Inventory`/position. Headless `App` test:
   spawn soldier + hostile, tick, assert snapshot fields.
 - **M3 — executor.** `PlanRunner`, `Deliberation` set, operator dispatch,
