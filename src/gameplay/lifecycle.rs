@@ -6,6 +6,7 @@ use crate::ai::perception::{AuditorySensor, EyeHeight, PerceptionMemory, VisualS
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
+use crate::gameplay::packets::{Inbox, Outbox, SeenPackets};
 use crate::gameplay::simulation::UnitOrder;
 use bevy::prelude::*;
 
@@ -40,7 +41,10 @@ pub fn kill_unit(commands: &mut Commands, entity: Entity) {
         .remove::<EyeHeight>()
         .remove::<VoiceComms>()
         .remove::<CommsLinks>()
-        .remove::<PerceptionMemory>();
+        .remove::<PerceptionMemory>()
+        .remove::<Inbox>()
+        .remove::<Outbox>()
+        .remove::<SeenPackets>();
 }
 
 fn warn_invalid_life_status(

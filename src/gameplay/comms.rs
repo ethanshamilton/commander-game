@@ -158,7 +158,7 @@ fn update_voice_comms(
     }
 }
 
-fn update_comms_graph(
+pub(crate) fn update_comms_graph(
     links_query: Query<(Entity, &CommsLinks), (With<Soldier>, With<Alive>)>,
     mut graph: ResMut<CommsGraph>,
 ) {

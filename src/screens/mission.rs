@@ -18,6 +18,7 @@ use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
 use crate::gameplay::orders::CombatOrderSource;
+use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::missions::{MissionDefinition, SelectedMission};
@@ -1098,6 +1099,7 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     commands.insert_resource(BattlefieldMap::from_definition(mission.map));
     commands.insert_resource(SimulationClock::default());
     commands.insert_resource(PlayerTacticalKnowledge::default());
+    commands.insert_resource(PacketIdAllocator::default());
     commands.insert_resource(SelectedUnit::default());
     commands.insert_resource(MissionObjectiveSet::from_slices(
         mission.victory_conditions,
@@ -1195,6 +1197,9 @@ pub fn spawn_soldier_at(
             PerceptionMemory::default(),
             VoiceComms::default(),
             CommsLinks::default(),
+            Inbox::default(),
+            Outbox::default(),
+            SeenPackets::default(),
             Autonomous,
             DecisionTrace::default(),
             PlannerBelief::default(),
