@@ -94,11 +94,7 @@ fn poll_move(destination_m: Vec2, current_order: Option<&UnitOrder>) -> StepPoll
     }
 }
 
-fn poll_fire(
-    target: Entity,
-    combat_order: Option<&CombatOrder>,
-    state: &PlannerState,
-) -> StepPoll {
+fn poll_fire(target: Entity, combat_order: Option<&CombatOrder>, state: &PlannerState) -> StepPoll {
     match combat_order {
         Some(CombatOrder::FireAt { target: current }) if *current == target => {
             if !state.has_ammo {

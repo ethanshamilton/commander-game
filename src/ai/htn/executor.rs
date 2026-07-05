@@ -7,7 +7,9 @@ use super::trace::{DecisionTrace, PlanRejectionReason, ReplanTrigger, TraceEvent
 use crate::GameState;
 use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::combat::{CombatOrder, ResolvedShot};
-use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource, clear_if_htn, is_player_sourced};
+use crate::gameplay::orders::{
+    CombatOrderSource, UnitOrderSource, clear_if_htn, is_player_sourced,
+};
 use crate::gameplay::simulation::{SimulationSet, UnitOrder};
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -86,6 +88,7 @@ pub fn collect_recent_resolved_shots(
 
 pub fn deliberate_autonomous_units(
     mut commands: Commands,
+    clock: Option<Res<crate::gameplay::simulation::SimulationClock>>,
     registry: Res<HtnDomainRegistry>,
     mut units: Query<
         (
@@ -100,6 +103,8 @@ pub fn deliberate_autonomous_units(
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
+    let (trace_tick, trace_elapsed_s) = trace_time(clock);
+
     for (entity, belief, domain_ref, unit_source, combat_source, runner, mut trace) in &mut units {
         let Some(domain) = registry.domains.get(&domain_ref.0) else {
             warn!(?entity, domain = ?domain_ref.0, "no HTN domain registered for unit's DomainRef");
@@ -111,9 +116,13 @@ pub fn deliberate_autonomous_units(
         match runner {
             Some(mut runner) => {
                 if has_external_order(unit_source, combat_source) {
-                    trace.push(TraceEvent::PlanRejected {
-                        reason: PlanRejectionReason::ExternalOrderActive,
-                    });
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::ExternalOrderActive,
+                        },
+                    );
                     commands.entity(entity).remove::<PlanRunner>();
                     continue;
                 }
@@ -124,26 +133,45 @@ pub fn deliberate_autonomous_units(
 
                 let Some(candidate) = plan(domain, state) else {
                     runner.last_state_digest = digest;
-                    trace.push(TraceEvent::PlanRejected {
-                        reason: PlanRejectionReason::NoValidPlan,
-                    });
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::NoValidPlan,
+                        },
+                    );
                     continue;
                 };
 
                 if !should_adopt_candidate(&candidate, &runner.plan) {
                     runner.last_state_digest = digest;
-                    trace.push(TraceEvent::PlanRejected {
-                        reason: PlanRejectionReason::MtrNotBetter,
-                    });
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::MtrNotBetter,
+                        },
+                    );
                     continue;
                 }
 
-                trace.push(TraceEvent::Replanned {
-                    trigger: ReplanTrigger::RelevantStateChanged,
-                });
+                trace.push(
+                    trace_tick,
+                    trace_elapsed_s,
+                    TraceEvent::Replanned {
+                        trigger: ReplanTrigger::RelevantStateChanged,
+                    },
+                );
                 clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
-                trace_plan_created(&mut trace, domain.root, domain, &candidate);
+                trace_plan_created(
+                    &mut trace,
+                    trace_tick,
+                    trace_elapsed_s,
+                    domain.root,
+                    domain,
+                    &candidate,
+                );
                 *runner = PlanRunner {
                     plan: candidate,
                     current: 0,
@@ -153,23 +181,42 @@ pub fn deliberate_autonomous_units(
             }
             None => {
                 if has_external_order(unit_source, combat_source) {
-                    trace.push(TraceEvent::PlanRejected {
-                        reason: PlanRejectionReason::ExternalOrderActive,
-                    });
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::ExternalOrderActive,
+                        },
+                    );
                     continue;
                 }
 
                 let Some(candidate) = plan(domain, state) else {
-                    trace.push(TraceEvent::PlanRejected {
-                        reason: PlanRejectionReason::NoValidPlan,
-                    });
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::NoValidPlan,
+                        },
+                    );
                     continue;
                 };
 
-                trace.push(TraceEvent::Replanned {
-                    trigger: ReplanTrigger::NoPlan,
-                });
-                trace_plan_created(&mut trace, domain.root, domain, &candidate);
+                trace.push(
+                    trace_tick,
+                    trace_elapsed_s,
+                    TraceEvent::Replanned {
+                        trigger: ReplanTrigger::NoPlan,
+                    },
+                );
+                trace_plan_created(
+                    &mut trace,
+                    trace_tick,
+                    trace_elapsed_s,
+                    domain.root,
+                    domain,
+                    &candidate,
+                );
                 commands.entity(entity).insert(PlanRunner {
                     plan: candidate,
                     current: 0,
@@ -183,23 +230,21 @@ pub fn deliberate_autonomous_units(
 
 pub fn start_pending_steps(
     mut commands: Commands,
+    clock: Option<Res<crate::gameplay::simulation::SimulationClock>>,
     mut units: Query<
-        (
-            Entity,
-            &PlannerBelief,
-            &mut PlanRunner,
-            &mut DecisionTrace,
-        ),
+        (Entity, &PlannerBelief, &mut PlanRunner, &mut DecisionTrace),
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
+    let (trace_tick, trace_elapsed_s) = trace_time(clock);
+
     for (entity, belief, mut runner, mut trace) in &mut units {
         if runner.step_state != StepState::Pending {
             continue;
         }
 
         if runner.current >= runner.plan.steps.len() {
-            trace.push(TraceEvent::PlanCompleted);
+            trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
@@ -207,27 +252,36 @@ pub fn start_pending_steps(
         let step = runner.plan.steps[runner.current].clone();
 
         if !(step.preconditions)(&belief.state) {
-            trace.push(TraceEvent::StepFailed {
-                task: step.task_name,
-                failed_condition: "precondition failed before dispatch",
-            });
+            trace.push(
+                trace_tick,
+                trace_elapsed_s,
+                TraceEvent::StepFailed {
+                    task: step.task_name,
+                    failed_condition: "precondition failed before dispatch",
+                },
+            );
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
 
         step.operator.dispatch(&mut commands, entity);
 
-        trace.push(TraceEvent::StepStarted {
-            task: step.task_name,
-            why: step.reason,
-            operator: step.operator.describe(),
-        });
+        trace.push(
+            trace_tick,
+            trace_elapsed_s,
+            TraceEvent::StepStarted {
+                task: step.task_name,
+                why: step.reason,
+                operator: step.operator.describe(),
+            },
+        );
         runner.step_state = StepState::Running;
     }
 }
 
 pub fn advance_plan_execution(
     mut commands: Commands,
+    clock: Option<Res<crate::gameplay::simulation::SimulationClock>>,
     mut units: Query<
         (
             Entity,
@@ -242,6 +296,8 @@ pub fn advance_plan_execution(
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
+    let (trace_tick, trace_elapsed_s) = trace_time(clock);
+
     for (
         entity,
         belief,
@@ -258,7 +314,7 @@ pub fn advance_plan_execution(
         }
 
         if runner.current >= runner.plan.steps.len() {
-            trace.push(TraceEvent::PlanCompleted);
+            trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
             clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
             clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
             commands.entity(entity).remove::<PlanRunner>();
@@ -277,23 +333,34 @@ pub fn advance_plan_execution(
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 runner.current += 1;
                 if runner.current >= runner.plan.steps.len() {
-                    trace.push(TraceEvent::PlanCompleted);
+                    trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
                     commands.entity(entity).remove::<PlanRunner>();
                 } else {
                     runner.step_state = StepState::Pending;
                 }
             }
             StepPoll::Failed(reason) => {
-                trace.push(TraceEvent::StepFailed {
-                    task: step.task_name,
-                    failed_condition: reason,
-                });
+                trace.push(
+                    trace_tick,
+                    trace_elapsed_s,
+                    TraceEvent::StepFailed {
+                        task: step.task_name,
+                        failed_condition: reason,
+                    },
+                );
                 clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 commands.entity(entity).remove::<PlanRunner>();
             }
         }
     }
+}
+
+fn trace_time(clock: Option<Res<crate::gameplay::simulation::SimulationClock>>) -> (u64, f32) {
+    clock
+        .as_deref()
+        .map(|clock| (clock.tick, clock.elapsed_s))
+        .unwrap_or((0, 0.0))
 }
 
 fn should_adopt_candidate(candidate: &Plan, current: &Plan) -> bool {
@@ -319,12 +386,23 @@ fn has_external_order(
     is_player_sourced(unit_source) || is_player_sourced(combat_source)
 }
 
-fn trace_plan_created(trace: &mut DecisionTrace, root: TaskId, domain: &Domain, plan: &Plan) {
-    trace.push(TraceEvent::PlanCreated {
-        root: domain.task_name(root).unwrap_or("<unknown>"),
-        mtr: plan.mtr.clone(),
-        steps: plan.steps.iter().map(|step| step.describe()).collect(),
-    });
+fn trace_plan_created(
+    trace: &mut DecisionTrace,
+    tick: u64,
+    elapsed_s: f32,
+    root: TaskId,
+    domain: &Domain,
+    plan: &Plan,
+) {
+    trace.push(
+        tick,
+        elapsed_s,
+        TraceEvent::PlanCreated {
+            root: domain.task_name(root).unwrap_or("<unknown>"),
+            mtr: plan.mtr.clone(),
+            steps: plan.steps.iter().map(|step| step.describe()).collect(),
+        },
+    );
 }
 
 #[cfg(test)]
@@ -400,12 +478,9 @@ mod tests {
         inventory: Inventory,
         memory: PerceptionMemory,
     ) {
-        world.entity_mut(entity).insert((
-            health,
-            inventory,
-            memory,
-            PlannerBelief::default(),
-        ));
+        world
+            .entity_mut(entity)
+            .insert((health, inventory, memory, PlannerBelief::default()));
     }
 
     fn spawn_autonomous(world: &mut World) -> Entity {
@@ -549,10 +624,7 @@ mod tests {
             crate::gameplay::orders::OrderSource::Htn
         );
         assert_eq!(
-            app.world()
-                .get::<CombatOrderSource>(entity)
-                .unwrap()
-                .source,
+            app.world().get::<CombatOrderSource>(entity).unwrap().source,
             crate::gameplay::orders::OrderSource::Htn
         );
         assert_eq!(

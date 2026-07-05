@@ -1,5 +1,5 @@
-use super::state::PlannerState;
 pub use super::operators::BoundOperator;
+use super::state::PlannerState;
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

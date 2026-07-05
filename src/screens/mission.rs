@@ -5,7 +5,9 @@ use crate::actors::units::*;
 use crate::actors::weapons::Weapon;
 use crate::ai::htn::executor::{Autonomous, DomainId, DomainRef};
 use crate::ai::htn::synthesis::PlannerBelief;
-use crate::ai::htn::trace::DecisionTrace;
+use crate::ai::htn::trace::{
+    DecisionTrace, PlanRejectionReason, ReplanTrigger, TraceEvent, TraceRecord,
+};
 use crate::ai::perception::{
     AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
 };
@@ -28,7 +30,7 @@ use crate::ui::widgets::{
 use bevy::camera::visibility::Visibility;
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
-use bevy::ui_widgets::{Activate, ValueChange, observe};
+use bevy::ui_widgets::{Activate, Button, ValueChange, observe};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -46,6 +48,50 @@ pub struct SelectedUnitInfoPanel;
 
 #[derive(Component)]
 pub struct SelectedUnitInfoText;
+
+#[derive(Component)]
+pub struct SelectedUnitTraceToggleText;
+
+#[derive(Component)]
+pub struct SelectedUnitTraceBody;
+
+#[derive(Component)]
+pub struct SelectedUnitTraceText;
+
+#[derive(Component)]
+pub struct SelectedUnitBeliefsToggleText;
+
+#[derive(Component)]
+pub struct SelectedUnitBeliefsBody;
+
+#[derive(Component)]
+pub struct SelectedUnitBeliefsText;
+
+#[derive(Component, Clone, Copy)]
+struct UnitDebugSectionToggle {
+    section: UnitDebugSection,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UnitDebugSection {
+    Trace,
+    Beliefs,
+}
+
+#[derive(Resource, Debug)]
+pub struct UnitDebugPanelState {
+    trace_open: bool,
+    beliefs_open: bool,
+}
+
+impl Default for UnitDebugPanelState {
+    fn default() -> Self {
+        Self {
+            trace_open: false,
+            beliefs_open: false,
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct SimulationClockText;
@@ -129,6 +175,7 @@ pub struct MissionScreenPlugin;
 impl Plugin for MissionScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
+            .init_resource::<UnitDebugPanelState>()
             .add_systems(
                 OnEnter(crate::GameState::MissionScreen),
                 (setup_mission_ui, setup_selected_mission),
@@ -168,6 +215,21 @@ fn handle_spawn_soldier_activate(
     spawn_soldier(&mut commands, action.rank, action.role, action.side);
 }
 
+fn handle_unit_debug_section_toggle(
+    activate: On<Activate>,
+    mut debug_state: ResMut<UnitDebugPanelState>,
+    toggles: Query<&UnitDebugSectionToggle>,
+) {
+    let Ok(toggle) = toggles.get(activate.entity) else {
+        return;
+    };
+
+    match toggle.section {
+        UnitDebugSection::Trace => debug_state.trace_open = !debug_state.trace_open,
+        UnitDebugSection::Beliefs => debug_state.beliefs_open = !debug_state.beliefs_open,
+    }
+}
+
 fn handle_mission_menu_toggle_change(
     value_change: On<ValueChange<bool>>,
     mut menu_state: ResMut<MenuState>,
@@ -201,8 +263,19 @@ pub fn update_selected_unit_info_panel(
     clock: Res<SimulationClock>,
     control: Res<PlayerControl>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    mut panel_query: Query<&mut Node, With<SelectedUnitInfoPanel>>,
-    mut text_query: Query<&mut Text, With<SelectedUnitInfoText>>,
+    debug_state: Res<UnitDebugPanelState>,
+    mut node_queries: ParamSet<(
+        Query<&mut Node, With<SelectedUnitInfoPanel>>,
+        Query<&mut Node, With<SelectedUnitTraceBody>>,
+        Query<&mut Node, With<SelectedUnitBeliefsBody>>,
+    )>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<SelectedUnitInfoText>>,
+        Query<&mut Text, With<SelectedUnitTraceToggleText>>,
+        Query<&mut Text, With<SelectedUnitTraceText>>,
+        Query<&mut Text, With<SelectedUnitBeliefsToggleText>>,
+        Query<&mut Text, With<SelectedUnitBeliefsText>>,
+    )>,
     units: Query<(
         &Soldier,
         &Allegiance,
@@ -213,8 +286,11 @@ pub fn update_selected_unit_info_panel(
         Option<&Heading>,
         Option<&VisualSensor>,
         Option<&PerceptionMemory>,
+        Option<&DecisionTrace>,
+        Option<&PlannerBelief>,
     )>,
 ) {
+    let mut panel_query = node_queries.p0();
     let Ok(mut panel_node) = panel_query.single_mut() else {
         return;
     };
@@ -234,6 +310,8 @@ pub fn update_selected_unit_info_panel(
         heading,
         visual_sensor,
         memory,
+        trace,
+        belief,
     )) = units.get(entity)
     else {
         panel_node.display = Display::None;
@@ -278,25 +356,191 @@ pub fn update_selected_unit_info_panel(
         0
     };
 
-    let Ok(mut text) = text_query.single_mut() else {
-        return;
+    drop(panel_node);
+    drop(panel_query);
+
+    {
+        let mut text_query = text_queries.p0();
+        let Ok(mut text) = text_query.single_mut() else {
+            return;
+        };
+
+        **text = format!(
+            "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
+            allegiance.side,
+            soldier.rank,
+            soldier.role,
+            health.current,
+            health.max,
+            mobility.speed,
+            inventory.ammo_count(),
+            position_m.x,
+            position_m.y,
+            heading_text,
+            sensor_text,
+            contact_count,
+        );
+    }
+
+    {
+        let mut toggle_query = text_queries.p1();
+        if let Ok(mut toggle_text) = toggle_query.single_mut() {
+            **toggle_text = format!(
+                "{} Decision Trace",
+                if debug_state.trace_open { "▾" } else { "▸" }
+            );
+        }
+    }
+    {
+        let mut body_query = node_queries.p1();
+        if let Ok(mut body_node) = body_query.single_mut() {
+            body_node.display = if debug_state.trace_open {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+    {
+        let mut trace_text_query = text_queries.p2();
+        if let Ok(mut trace_text) = trace_text_query.single_mut() {
+            **trace_text = format_trace_view(trace);
+        }
+    }
+
+    {
+        let mut toggle_query = text_queries.p3();
+        if let Ok(mut toggle_text) = toggle_query.single_mut() {
+            **toggle_text = format!(
+                "{} Beliefs",
+                if debug_state.beliefs_open {
+                    "▾"
+                } else {
+                    "▸"
+                }
+            );
+        }
+    }
+    {
+        let mut body_query = node_queries.p2();
+        if let Ok(mut body_node) = body_query.single_mut() {
+            body_node.display = if debug_state.beliefs_open {
+                Display::Flex
+            } else {
+                Display::None
+            };
+        }
+    }
+    {
+        let mut beliefs_text_query = text_queries.p4();
+        if let Ok(mut beliefs_text) = beliefs_text_query.single_mut() {
+            **beliefs_text = format_beliefs_view(belief);
+        }
+    }
+}
+
+fn format_trace_view(trace: Option<&DecisionTrace>) -> String {
+    let Some(trace) = trace else {
+        return "No decision trace component.".to_string();
     };
 
-    **text = format!(
-        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
-        allegiance.side,
-        soldier.rank,
-        soldier.role,
-        health.current,
-        health.max,
-        mobility.speed,
-        inventory.ammo_count(),
-        position_m.x,
-        position_m.y,
-        heading_text,
-        sensor_text,
-        contact_count,
+    let lines = trace
+        .records()
+        .rev()
+        .take(8)
+        .map(format_trace_record)
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        "No trace events yet.".to_string()
+    } else {
+        lines.join("\n\n")
+    }
+}
+
+fn format_trace_record(record: &TraceRecord) -> String {
+    format!(
+        "{}  {}",
+        format_sim_time(record.elapsed_s),
+        format_trace_event(&record.event)
+    )
+}
+
+fn format_trace_event(event: &TraceEvent) -> String {
+    match event {
+        TraceEvent::PlanCreated { root, mtr, steps } => {
+            let mut lines = vec![format!("PlanCreated: {root} MTR {:?}", mtr.0)];
+            lines.extend(steps.iter().map(|step| format!("  {step}")));
+            lines.join("\n")
+        }
+        TraceEvent::PlanRejected { reason } => {
+            format!("PlanRejected: {}", format_plan_rejection_reason(*reason))
+        }
+        TraceEvent::StepStarted {
+            task,
+            why,
+            operator,
+        } => format!("StepStarted: {task}\n  why: {why}\n  op: {operator}"),
+        TraceEvent::StepFailed {
+            task,
+            failed_condition,
+        } => format!("StepFailed: {task}\n  failed: {failed_condition}"),
+        TraceEvent::Replanned { trigger } => {
+            format!("Replanned: {}", format_replan_trigger(*trigger))
+        }
+        TraceEvent::PlanCompleted => "PlanCompleted".to_string(),
+    }
+}
+
+fn format_replan_trigger(trigger: ReplanTrigger) -> &'static str {
+    match trigger {
+        ReplanTrigger::NoPlan => "NoPlan",
+        ReplanTrigger::PlanCompleted => "PlanCompleted",
+        ReplanTrigger::StepFailed => "StepFailed",
+        ReplanTrigger::RelevantStateChanged => "RelevantStateChanged",
+    }
+}
+
+fn format_plan_rejection_reason(reason: PlanRejectionReason) -> &'static str {
+    match reason {
+        PlanRejectionReason::NoValidPlan => "NoValidPlan",
+        PlanRejectionReason::MtrNotBetter => "MtrNotBetter",
+        PlanRejectionReason::ExternalOrderActive => "ExternalOrderActive",
+    }
+}
+
+fn format_beliefs_view(belief: Option<&PlannerBelief>) -> String {
+    let Some(belief) = belief else {
+        return "No planner belief component.".to_string();
+    };
+
+    let state = &belief.state;
+    let hostile = state.nearest_hostile.map_or_else(
+        || "none".to_string(),
+        |hostile| {
+            format!(
+                "{:?}\n  pos: ({:.1}, {:.1})m\n  confidence: {:.2}\n  kind: {:?}\n  staleness: {} ticks",
+                hostile.entity,
+                hostile.position_m.x,
+                hostile.position_m.y,
+                hostile.confidence,
+                hostile.kind,
+                state.tick.saturating_sub(hostile.last_seen_tick),
+            )
+        },
     );
+
+    format!(
+        "Health: {:.2}\nAmmo: {}\nUnder fire: {}\nMove target: {}\nNearest hostile: {}",
+        state.health_frac, state.has_ammo, state.under_fire, state.has_move_target, hostile,
+    )
+}
+
+fn format_sim_time(elapsed_s: f32) -> String {
+    let total_seconds = elapsed_s.max(0.0);
+    let minutes = (total_seconds / 60.0).floor() as u32;
+    let seconds = total_seconds % 60.0;
+    format!("T+{minutes:02}:{seconds:04.1}")
 }
 
 pub fn update_simulation_clock_text(
@@ -715,6 +959,110 @@ pub fn setup_mission_ui(mut commands: Commands) {
                         },
                         TextColor(Color::srgb(0.85, 0.85, 0.85)),
                     ));
+
+                    panel
+                        .spawn((
+                            Button,
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(30.0),
+                                justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.12, 0.12, 0.12)),
+                            UnitDebugSectionToggle {
+                                section: UnitDebugSection::Trace,
+                            },
+                            observe(handle_unit_debug_section_toggle),
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                SelectedUnitTraceToggleText,
+                                Text::new("▸ Decision Trace"),
+                                TextFont {
+                                    font_size: FontSize::Px(15.0),
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+
+                    panel
+                        .spawn((
+                            SelectedUnitTraceBody,
+                            Node {
+                                display: Display::None,
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::left(Val::Px(6.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|body| {
+                            body.spawn((
+                                SelectedUnitTraceText,
+                                Text::new(""),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.78, 0.78, 0.78)),
+                            ));
+                        });
+
+                    panel
+                        .spawn((
+                            Button,
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(30.0),
+                                justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.12, 0.12, 0.12)),
+                            UnitDebugSectionToggle {
+                                section: UnitDebugSection::Beliefs,
+                            },
+                            observe(handle_unit_debug_section_toggle),
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                SelectedUnitBeliefsToggleText,
+                                Text::new("▸ Beliefs"),
+                                TextFont {
+                                    font_size: FontSize::Px(15.0),
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+
+                    panel
+                        .spawn((
+                            SelectedUnitBeliefsBody,
+                            Node {
+                                display: Display::None,
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Column,
+                                padding: UiRect::left(Val::Px(6.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|body| {
+                            body.spawn((
+                                SelectedUnitBeliefsText,
+                                Text::new(""),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.78, 0.78, 0.78)),
+                            ));
+                        });
                 });
         });
 }
@@ -779,14 +1127,12 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
         }
 
         if unit.side == Side::Red {
-            commands
-                .entity(entity)
-                .insert((
-                    Autonomous,
-                    DecisionTrace::default(),
-                    PlannerBelief::default(),
-                    DomainRef(DomainId::Soldier),
-                ));
+            commands.entity(entity).insert((
+                Autonomous,
+                DecisionTrace::default(),
+                PlannerBelief::default(),
+                DomainRef(DomainId::Soldier),
+            ));
         }
     }
 

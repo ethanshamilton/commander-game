@@ -158,10 +158,9 @@ fn issue_contextual_order(
     if let Some(target) =
         hostile_unit_at_cursor(&knowledge, control.side, clock.tick, world_position)
     {
-        commands.entity(entity).insert((
-            CombatOrder::FireAt { target },
-            CombatOrderSource::player(),
-        ));
+        commands
+            .entity(entity)
+            .insert((CombatOrder::FireAt { target }, CombatOrderSource::player()));
         return;
     }
 

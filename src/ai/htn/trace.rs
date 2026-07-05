@@ -6,7 +6,7 @@ pub const DEFAULT_TRACE_CAPACITY: usize = 64;
 
 #[derive(Component, Debug, Clone)]
 pub struct DecisionTrace {
-    events: VecDeque<TraceEvent>,
+    records: VecDeque<TraceRecord>,
     capacity: usize,
 }
 
@@ -19,32 +19,47 @@ impl Default for DecisionTrace {
 impl DecisionTrace {
     pub fn new(capacity: usize) -> Self {
         Self {
-            events: VecDeque::with_capacity(capacity),
+            records: VecDeque::with_capacity(capacity),
             capacity,
         }
     }
 
-    pub fn push(&mut self, event: TraceEvent) {
+    pub fn push(&mut self, tick: u64, elapsed_s: f32, event: TraceEvent) {
         if self.capacity == 0 {
             return;
         }
 
-        while self.events.len() >= self.capacity {
-            self.events.pop_front();
+        while self.records.len() >= self.capacity {
+            self.records.pop_front();
         }
 
-        debug!(?event, "htn trace");
-        self.events.push_back(event);
+        debug!(tick, elapsed_s, ?event, "htn trace");
+        self.records.push_back(TraceRecord {
+            tick,
+            elapsed_s,
+            event,
+        });
+    }
+
+    pub fn records(&self) -> impl DoubleEndedIterator<Item = &TraceRecord> {
+        self.records.iter()
     }
 
     pub fn events(&self) -> impl Iterator<Item = &TraceEvent> {
-        self.events.iter()
+        self.records.iter().map(|record| &record.event)
     }
 
     #[allow(dead_code)]
     pub fn latest(&self) -> Option<&TraceEvent> {
-        self.events.back()
+        self.records.back().map(|record| &record.event)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceRecord {
+    pub tick: u64,
+    pub elapsed_s: f32,
+    pub event: TraceEvent,
 }
 
 #[allow(dead_code)]
@@ -97,17 +112,27 @@ mod tests {
     fn trace_keeps_ring_capacity() {
         let mut trace = DecisionTrace::new(2);
 
-        trace.push(TraceEvent::PlanRejected {
-            reason: PlanRejectionReason::NoValidPlan,
-        });
-        trace.push(TraceEvent::Replanned {
-            trigger: ReplanTrigger::NoPlan,
-        });
-        trace.push(TraceEvent::PlanCompleted);
+        trace.push(
+            1,
+            0.1,
+            TraceEvent::PlanRejected {
+                reason: PlanRejectionReason::NoValidPlan,
+            },
+        );
+        trace.push(
+            2,
+            0.2,
+            TraceEvent::Replanned {
+                trigger: ReplanTrigger::NoPlan,
+            },
+        );
+        trace.push(3, 0.3, TraceEvent::PlanCompleted);
 
-        let events = trace.events().collect::<Vec<_>>();
-        assert_eq!(events.len(), 2);
-        assert!(matches!(events[0], TraceEvent::Replanned { .. }));
-        assert!(matches!(events[1], TraceEvent::PlanCompleted));
+        let records = trace.records().collect::<Vec<_>>();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].tick, 2);
+        assert_eq!(records[1].elapsed_s, 0.3);
+        assert!(matches!(records[0].event, TraceEvent::Replanned { .. }));
+        assert!(matches!(records[1].event, TraceEvent::PlanCompleted));
     }
 }
