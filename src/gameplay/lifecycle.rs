@@ -5,6 +5,7 @@ use crate::actors::units::{Alive, Dead, Soldier};
 use crate::ai::perception::{AuditorySensor, EyeHeight, PerceptionMemory, VisualSensor};
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
+use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::UnitOrder;
 use bevy::prelude::*;
 
@@ -30,7 +31,9 @@ pub fn kill_unit(commands: &mut Commands, entity: Entity) {
         .remove::<Alive>()
         .insert(Dead)
         .remove::<UnitOrder>()
+        .remove::<UnitOrderSource>()
         .remove::<CombatOrder>()
+        .remove::<CombatOrderSource>()
         .remove::<CombatState>()
         .remove::<VisualSensor>()
         .remove::<AuditorySensor>()

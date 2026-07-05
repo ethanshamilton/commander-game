@@ -6,6 +6,7 @@ use crate::actors::units::{Alive, Allegiance, Health, Inventory, Soldier};
 use crate::actors::weapons::Weapon;
 use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::lifecycle::kill_unit;
+use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::BattlefieldPosition;
 use bevy::prelude::*;
@@ -38,10 +39,11 @@ pub fn terminate_fire_orders(
         &Inventory,
         &PerceptionMemory,
         &mut CombatOrder,
+        Option<&mut CombatOrderSource>,
     )>,
     targets: Query<(&Allegiance, Option<&Alive>), With<Soldier>>,
 ) {
-    for (shooter, shooter_allegiance, inventory, memory, mut order) in &mut shooters {
+    for (shooter, shooter_allegiance, inventory, memory, mut order, mut source) in &mut shooters {
         let CombatOrder::FireAt { target } = *order else {
             continue;
         };
@@ -70,6 +72,9 @@ pub fn terminate_fire_orders(
         if let Some(reason) = termination {
             debug!(?shooter, ?target, ?reason, "fire order terminated");
             *order = CombatOrder::HoldFire;
+            if let Some(source) = source.as_deref_mut() {
+                *source = CombatOrderSource::doctrine();
+            }
         }
     }
 }

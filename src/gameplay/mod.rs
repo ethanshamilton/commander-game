@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod map;
 pub mod measurements;
 pub mod objectives;
+pub mod orders;
 pub mod rendering;
 pub mod simulation;
 pub mod spatial;

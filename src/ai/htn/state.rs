@@ -51,3 +51,43 @@ impl Default for PlannerState {
         }
     }
 }
+
+/// Quantized projection of `PlannerState` used to detect decision-relevant change.
+/// The executor replans only when this digest changes.
+///
+/// CONTRACT: when adding a field to `PlannerState`, decide HERE whether it is
+/// decision-relevant. If any domain precondition reads the new field, the digest
+/// must reflect it (band/bool-quantized, never raw floats or ticks), or units will
+/// silently fail to replan when it changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlannerStateDigest {
+    pub nearest_hostile: Option<Entity>,
+    pub hostile_fresh: bool,
+    pub health_band: u8,
+    pub has_ammo: bool,
+    pub under_fire: bool,
+    pub has_move_target: bool,
+}
+
+impl PlannerStateDigest {
+    pub fn from_state(state: &PlannerState) -> Self {
+        Self {
+            nearest_hostile: state.nearest_hostile.map(|hostile| hostile.entity),
+            hostile_fresh: state.hostile_is_fresh(super::soldier::FRESH_CONTACT_TICKS),
+            health_band: health_band(state.health_frac),
+            has_ammo: state.has_ammo,
+            under_fire: state.under_fire,
+            has_move_target: state.has_move_target,
+        }
+    }
+}
+
+fn health_band(health_frac: f32) -> u8 {
+    if health_frac < 0.35 {
+        0
+    } else if health_frac < 0.7 {
+        1
+    } else {
+        2
+    }
+}

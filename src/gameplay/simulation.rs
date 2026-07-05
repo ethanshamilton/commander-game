@@ -2,6 +2,7 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Mobility, Soldier};
+use crate::gameplay::orders::UnitOrderSource;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use bevy::prelude::*;
 
@@ -131,14 +132,18 @@ fn move_units(
         let distance_m = offset.length();
 
         if distance_m <= f32::EPSILON {
-            commands.entity(entity).remove::<UnitOrder>();
+            commands
+                .entity(entity)
+                .remove::<(UnitOrder, UnitOrderSource)>();
             continue;
         }
 
         let max_step_m = mobility.speed.max(0) as f32 * dt;
         if distance_m <= max_step_m {
             position.0 = destination_m;
-            commands.entity(entity).remove::<UnitOrder>();
+            commands
+                .entity(entity)
+                .remove::<(UnitOrder, UnitOrderSource)>();
         } else {
             let direction = offset / distance_m;
             position.0 += direction * max_step_m;

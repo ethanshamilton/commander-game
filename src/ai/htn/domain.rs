@@ -1,4 +1,5 @@
 use super::state::PlannerState;
+pub use super::operators::BoundOperator;
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,25 +36,6 @@ pub struct Method {
     pub name: &'static str,
     pub preconditions: ConditionFn,
     pub subtasks: Vec<TaskId>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BoundOperator {
-    Hold,
-    MoveTo { destination_m: Vec2 },
-    FireAt { target: Entity },
-}
-
-impl BoundOperator {
-    pub fn describe(&self) -> String {
-        match self {
-            BoundOperator::Hold => "hold position / hold fire".to_string(),
-            BoundOperator::MoveTo { destination_m } => {
-                format!("move to ({:.1}, {:.1})m", destination_m.x, destination_m.y)
-            }
-            BoundOperator::FireAt { target } => format!("fire at {target:?}"),
-        }
-    }
 }
 
 pub struct Domain {

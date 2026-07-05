@@ -38,3 +38,11 @@ Running/evergreen notes file for the project.
   - Standing reduces target unit's accuracy, makes it easier for enemies to hit (enemy unit's base accuracy value fully applies)
   - Crouching increases target unit's accuracy, decreases move speed slightly. Reduces enemy unit's accuracy.
   - Prone increases target unit's accuracy the most but narrows engagement cone and significantly reduces move speed. Significantly reduces enemy unit's accuracy.
+
+## TOOLS
+
+### MISSION EDITOR
+- Would be useful to have a mission editor which allows units/squads to be placed and set victory conditions etc. Just something to set the initial state of a mission.
+
+### MAP EDITOR
+- Right now map design is kind of inscrutable because it's just implemented with a hardcoded height map. If there were a way to create these with a tool, that would be nice.

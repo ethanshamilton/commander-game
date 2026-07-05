@@ -3,7 +3,8 @@
 use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
 use crate::actors::weapons::Weapon;
-use crate::ai::htn::executor::Autonomous;
+use crate::ai::htn::executor::{Autonomous, DomainId, DomainRef};
+use crate::ai::htn::synthesis::PlannerBelief;
 use crate::ai::htn::trace::DecisionTrace;
 use crate::ai::perception::{
     AuditorySensor, EyeHeight, PerceptionMemory, SensorSignature, VisualSensor,
@@ -14,6 +15,7 @@ use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
+use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::missions::{MissionDefinition, SelectedMission};
@@ -779,7 +781,12 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
         if unit.side == Side::Red {
             commands
                 .entity(entity)
-                .insert((Autonomous, DecisionTrace::default()));
+                .insert((
+                    Autonomous,
+                    DecisionTrace::default(),
+                    PlannerBelief::default(),
+                    DomainRef(DomainId::Soldier),
+                ));
         }
     }
 
@@ -847,6 +854,7 @@ pub fn spawn_soldier_at(
             CombatState::default(),
             Marksmanship::default(),
             CombatOrder::HoldFire,
+            CombatOrderSource::doctrine(),
             PerceptionMemory::default(),
             VoiceComms::default(),
             CommsLinks::default(),

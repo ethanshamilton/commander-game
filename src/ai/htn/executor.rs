@@ -1,17 +1,16 @@
-use super::domain::{BoundOperator, Domain, TaskId};
+use super::domain::{Domain, TaskId};
+use super::operators::StepPoll;
 use super::planner::{Plan, plan};
-use super::synthesis::synthesize_planner_state;
+use super::state::PlannerStateDigest;
+use super::synthesis::PlannerBelief;
 use super::trace::{DecisionTrace, PlanRejectionReason, ReplanTrigger, TraceEvent};
 use crate::GameState;
-use crate::actors::units::{Alive, Health, Inventory, Soldier};
-use crate::ai::perception::{AuditorySensor, ContactKind, PerceptionMemory};
+use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::combat::{CombatOrder, ResolvedShot};
-use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
-use crate::gameplay::spatial::BattlefieldPosition;
+use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource, clear_if_htn, is_player_sourced};
+use crate::gameplay::simulation::{SimulationSet, UnitOrder};
 use bevy::prelude::*;
-
-const FRESH_HOSTILE_TICKS: u64 = super::soldier::FRESH_CONTACT_TICKS;
-const MOVE_DESTINATION_EPSILON_M: f32 = 0.05;
+use std::collections::HashMap;
 
 pub struct HtnExecutorPlugin;
 
@@ -22,6 +21,7 @@ impl Plugin for HtnExecutorPlugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    super::synthesis::synthesize_beliefs,
                     advance_plan_execution,
                     deliberate_autonomous_units,
                     start_pending_steps,
@@ -37,9 +37,21 @@ impl Plugin for HtnExecutorPlugin {
     }
 }
 
+/// Identifies which HTN domain an autonomous unit plans with. New archetypes
+/// (vehicles, squads, ...) add a variant here plus a builder registered in
+/// `HtnPlugin`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DomainId {
+    Soldier,
+}
+
+/// Which HTN domain this autonomous unit plans with.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct DomainRef(pub DomainId);
+
 #[derive(Resource, Default)]
 pub struct HtnDomainRegistry {
-    pub soldier: Option<Domain>,
+    pub domains: HashMap<DomainId, Domain>,
 }
 
 #[derive(Resource, Debug, Default, Clone)]
@@ -50,58 +62,18 @@ pub struct RecentResolvedShots {
 #[derive(Component, Debug, Default, Clone, Copy)]
 pub struct Autonomous;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub struct IssuedOrders {
-    pub unit_order: Option<UnitOrder>,
-    pub combat_order: Option<CombatOrder>,
-}
-
 #[derive(Component, Debug, Clone)]
 pub struct PlanRunner {
     pub plan: Plan,
     pub current: usize,
     pub step_state: StepState,
     pub last_state_digest: PlannerStateDigest,
-    pub issued_orders: IssuedOrders,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepState {
     Pending,
     Running,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlannerStateDigest {
-    pub nearest_hostile: Option<Entity>,
-    pub hostile_fresh: bool,
-    pub health_band: u8,
-    pub has_ammo: bool,
-    pub under_fire: bool,
-    pub has_move_target: bool,
-}
-
-impl PlannerStateDigest {
-    pub fn from_state(state: &super::state::PlannerState) -> Self {
-        Self {
-            nearest_hostile: state.nearest_hostile.map(|hostile| hostile.entity),
-            hostile_fresh: state.hostile_is_fresh(FRESH_HOSTILE_TICKS),
-            health_band: health_band(state.health_frac),
-            has_ammo: state.has_ammo,
-            under_fire: state.under_fire,
-            has_move_target: state.has_move_target,
-        }
-    }
-}
-
-fn health_band(health_frac: f32) -> u8 {
-    if health_frac < 0.35 {
-        0
-    } else if health_frac < 0.7 {
-        1
-    } else {
-        2
-    }
 }
 
 pub fn collect_recent_resolved_shots(
@@ -114,57 +86,31 @@ pub fn collect_recent_resolved_shots(
 
 pub fn deliberate_autonomous_units(
     mut commands: Commands,
-    clock: Res<SimulationClock>,
     registry: Res<HtnDomainRegistry>,
-    recent_shots: Res<RecentResolvedShots>,
     mut units: Query<
         (
             Entity,
-            &BattlefieldPosition,
-            &Health,
-            &Inventory,
-            &PerceptionMemory,
-            Option<&AuditorySensor>,
-            Option<&UnitOrder>,
-            Option<&CombatOrder>,
+            &PlannerBelief,
+            &DomainRef,
+            Option<&UnitOrderSource>,
+            Option<&CombatOrderSource>,
             Option<&mut PlanRunner>,
             &mut DecisionTrace,
         ),
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
-    let Some(domain) = registry.soldier.as_ref() else {
-        return;
-    };
-
-    for (
-        entity,
-        position,
-        health,
-        inventory,
-        memory,
-        auditory_sensor,
-        current_order,
-        combat_order,
-        runner,
-        mut trace,
-    ) in &mut units
-    {
-        let state = synthesize_planner_state(
-            &clock,
-            position,
-            health,
-            inventory,
-            memory,
-            auditory_sensor,
-            current_order,
-            &recent_shots.shots,
-        );
-        let digest = PlannerStateDigest::from_state(&state);
+    for (entity, belief, domain_ref, unit_source, combat_source, runner, mut trace) in &mut units {
+        let Some(domain) = registry.domains.get(&domain_ref.0) else {
+            warn!(?entity, domain = ?domain_ref.0, "no HTN domain registered for unit's DomainRef");
+            continue;
+        };
+        let state = &belief.state;
+        let digest = PlannerStateDigest::from_state(state);
 
         match runner {
             Some(mut runner) => {
-                if has_external_order(current_order, combat_order, &runner.issued_orders) {
+                if has_external_order(unit_source, combat_source) {
                     trace.push(TraceEvent::PlanRejected {
                         reason: PlanRejectionReason::ExternalOrderActive,
                     });
@@ -176,7 +122,7 @@ pub fn deliberate_autonomous_units(
                     continue;
                 }
 
-                let Some(candidate) = plan(domain, &state) else {
+                let Some(candidate) = plan(domain, state) else {
                     runner.last_state_digest = digest;
                     trace.push(TraceEvent::PlanRejected {
                         reason: PlanRejectionReason::NoValidPlan,
@@ -195,31 +141,25 @@ pub fn deliberate_autonomous_units(
                 trace.push(TraceEvent::Replanned {
                     trigger: ReplanTrigger::RelevantStateChanged,
                 });
-                clear_htn_orders_if_unchanged(
-                    &mut commands,
-                    entity,
-                    current_order,
-                    combat_order,
-                    runner.issued_orders,
-                );
+                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 trace_plan_created(&mut trace, domain.root, domain, &candidate);
                 *runner = PlanRunner {
                     plan: candidate,
                     current: 0,
                     step_state: StepState::Pending,
                     last_state_digest: digest,
-                    issued_orders: IssuedOrders::default(),
                 };
             }
             None => {
-                if has_external_order(current_order, combat_order, &IssuedOrders::default()) {
+                if has_external_order(unit_source, combat_source) {
                     trace.push(TraceEvent::PlanRejected {
                         reason: PlanRejectionReason::ExternalOrderActive,
                     });
                     continue;
                 }
 
-                let Some(candidate) = plan(domain, &state) else {
+                let Some(candidate) = plan(domain, state) else {
                     trace.push(TraceEvent::PlanRejected {
                         reason: PlanRejectionReason::NoValidPlan,
                     });
@@ -235,7 +175,6 @@ pub fn deliberate_autonomous_units(
                     current: 0,
                     step_state: StepState::Pending,
                     last_state_digest: digest,
-                    issued_orders: IssuedOrders::default(),
                 });
             }
         }
@@ -244,75 +183,30 @@ pub fn deliberate_autonomous_units(
 
 pub fn start_pending_steps(
     mut commands: Commands,
-    clock: Res<SimulationClock>,
-    recent_shots: Res<RecentResolvedShots>,
     mut units: Query<
         (
             Entity,
-            &BattlefieldPosition,
-            &Health,
-            &Inventory,
-            &PerceptionMemory,
-            Option<&AuditorySensor>,
-            Option<&UnitOrder>,
-            Option<&CombatOrder>,
+            &PlannerBelief,
             &mut PlanRunner,
             &mut DecisionTrace,
         ),
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
-    for (
-        entity,
-        position,
-        health,
-        inventory,
-        memory,
-        auditory_sensor,
-        current_order,
-        combat_order,
-        mut runner,
-        mut trace,
-    ) in &mut units
-    {
+    for (entity, belief, mut runner, mut trace) in &mut units {
         if runner.step_state != StepState::Pending {
             continue;
         }
 
         if runner.current >= runner.plan.steps.len() {
             trace.push(TraceEvent::PlanCompleted);
-            clear_htn_orders_if_unchanged(
-                &mut commands,
-                entity,
-                current_order,
-                combat_order,
-                runner.issued_orders,
-            );
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
 
         let step = runner.plan.steps[runner.current].clone();
-        if has_external_order(current_order, combat_order, &runner.issued_orders) {
-            trace.push(TraceEvent::PlanRejected {
-                reason: PlanRejectionReason::ExternalOrderActive,
-            });
-            commands.entity(entity).remove::<PlanRunner>();
-            continue;
-        }
 
-        let state = synthesize_planner_state(
-            &clock,
-            position,
-            health,
-            inventory,
-            memory,
-            auditory_sensor,
-            current_order,
-            &recent_shots.shots,
-        );
-
-        if !(step.preconditions)(&state) {
+        if !(step.preconditions)(&belief.state) {
             trace.push(TraceEvent::StepFailed {
                 task: step.task_name,
                 failed_condition: "precondition failed before dispatch",
@@ -321,33 +215,7 @@ pub fn start_pending_steps(
             continue;
         }
 
-        match step.operator {
-            BoundOperator::Hold => {
-                commands
-                    .entity(entity)
-                    .insert((UnitOrder::Hold, CombatOrder::HoldFire));
-                runner.issued_orders = IssuedOrders {
-                    unit_order: Some(UnitOrder::Hold),
-                    combat_order: Some(CombatOrder::HoldFire),
-                };
-            }
-            BoundOperator::MoveTo { destination_m } => {
-                let unit_order = UnitOrder::MoveTo { destination_m };
-                commands.entity(entity).insert(unit_order);
-                runner.issued_orders = IssuedOrders {
-                    unit_order: Some(unit_order),
-                    combat_order: None,
-                };
-            }
-            BoundOperator::FireAt { target } => {
-                let combat_order = CombatOrder::FireAt { target };
-                commands.entity(entity).insert(combat_order);
-                runner.issued_orders = IssuedOrders {
-                    unit_order: None,
-                    combat_order: Some(combat_order),
-                };
-            }
-        }
+        step.operator.dispatch(&mut commands, entity);
 
         trace.push(TraceEvent::StepStarted {
             task: step.task_name,
@@ -360,18 +228,14 @@ pub fn start_pending_steps(
 
 pub fn advance_plan_execution(
     mut commands: Commands,
-    clock: Res<SimulationClock>,
-    recent_shots: Res<RecentResolvedShots>,
     mut units: Query<
         (
             Entity,
-            &BattlefieldPosition,
-            &Health,
-            &Inventory,
-            &PerceptionMemory,
-            Option<&AuditorySensor>,
+            &PlannerBelief,
             Option<&UnitOrder>,
             Option<&CombatOrder>,
+            Option<&UnitOrderSource>,
+            Option<&CombatOrderSource>,
             &mut PlanRunner,
             &mut DecisionTrace,
         ),
@@ -380,13 +244,11 @@ pub fn advance_plan_execution(
 ) {
     for (
         entity,
-        position,
-        health,
-        inventory,
-        memory,
-        auditory_sensor,
+        belief,
         current_order,
         combat_order,
+        unit_source,
+        combat_source,
         mut runner,
         mut trace,
     ) in &mut units
@@ -397,47 +259,22 @@ pub fn advance_plan_execution(
 
         if runner.current >= runner.plan.steps.len() {
             trace.push(TraceEvent::PlanCompleted);
-            clear_htn_orders_if_unchanged(
-                &mut commands,
-                entity,
-                current_order,
-                combat_order,
-                runner.issued_orders,
-            );
+            clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+            clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
 
         let step = &runner.plan.steps[runner.current];
-        let outcome = match step.operator {
-            BoundOperator::Hold => StepPoll::Running,
-            BoundOperator::MoveTo { destination_m } => poll_move(destination_m, current_order),
-            BoundOperator::FireAt { target } => {
-                let state = synthesize_planner_state(
-                    &clock,
-                    position,
-                    health,
-                    inventory,
-                    memory,
-                    auditory_sensor,
-                    current_order,
-                    &recent_shots.shots,
-                );
-                poll_fire(target, combat_order, &state)
-            }
-        };
+        let outcome = step
+            .operator
+            .poll(&belief.state, current_order, combat_order);
 
         match outcome {
             StepPoll::Running => {}
             StepPoll::Succeeded => {
-                clear_htn_orders_if_unchanged(
-                    &mut commands,
-                    entity,
-                    current_order,
-                    combat_order,
-                    runner.issued_orders,
-                );
-                runner.issued_orders = IssuedOrders::default();
+                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 runner.current += 1;
                 if runner.current >= runner.plan.steps.len() {
                     trace.push(TraceEvent::PlanCompleted);
@@ -451,67 +288,11 @@ pub fn advance_plan_execution(
                     task: step.task_name,
                     failed_condition: reason,
                 });
-                clear_htn_orders_if_unchanged(
-                    &mut commands,
-                    entity,
-                    current_order,
-                    combat_order,
-                    runner.issued_orders,
-                );
+                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 commands.entity(entity).remove::<PlanRunner>();
             }
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StepPoll {
-    Running,
-    Succeeded,
-    Failed(&'static str),
-}
-
-fn poll_move(destination_m: Vec2, current_order: Option<&UnitOrder>) -> StepPoll {
-    match current_order {
-        None => StepPoll::Succeeded,
-        Some(UnitOrder::MoveTo {
-            destination_m: current,
-        }) => {
-            if current.distance(destination_m) <= MOVE_DESTINATION_EPSILON_M {
-                StepPoll::Running
-            } else {
-                StepPoll::Failed("move order destination changed")
-            }
-        }
-        Some(UnitOrder::Hold) => StepPoll::Failed("move order replaced by hold"),
-    }
-}
-
-fn poll_fire(
-    target: Entity,
-    combat_order: Option<&CombatOrder>,
-    state: &super::state::PlannerState,
-) -> StepPoll {
-    match combat_order {
-        Some(CombatOrder::FireAt { target: current }) if *current == target => {
-            if !state.has_ammo {
-                return StepPoll::Succeeded;
-            }
-
-            let Some(hostile) = state.nearest_hostile else {
-                return StepPoll::Succeeded;
-            };
-
-            if hostile.entity != target
-                || hostile.kind != ContactKind::Visual
-                || !state.hostile_is_fresh(FRESH_HOSTILE_TICKS)
-            {
-                return StepPoll::Succeeded;
-            }
-
-            StepPoll::Running
-        }
-        _ => StepPoll::Succeeded,
     }
 }
 
@@ -528,43 +309,14 @@ fn plan_bound_operators_differ(a: &Plan, b: &Plan) -> bool {
             .any(|(a_step, b_step)| a_step.operator != b_step.operator)
 }
 
+/// True if either order component present on the entity was issued directly
+/// by the player. Player-sourced orders preempt autonomous planning; Htn- and
+/// Doctrine-sourced orders never do (see `docs/gameplay/orders.md`).
 fn has_external_order(
-    unit_order: Option<&UnitOrder>,
-    combat_order: Option<&CombatOrder>,
-    issued_orders: &IssuedOrders,
+    unit_source: Option<&UnitOrderSource>,
+    combat_source: Option<&CombatOrderSource>,
 ) -> bool {
-    let external_unit_order = match (unit_order, issued_orders.unit_order) {
-        (None, _) => false,
-        (Some(current), Some(issued)) => *current != issued,
-        (Some(_), None) => true,
-    };
-    let external_combat_order = match (combat_order, issued_orders.combat_order) {
-        (None, _) => false,
-        // HoldFire is the default combat posture every soldier spawns with (and
-        // what combat resolution decays FireAt into). It is never a player
-        // directive, so it must not suppress autonomous planning.
-        (Some(CombatOrder::HoldFire), _) => false,
-        (Some(current), Some(issued)) => *current != issued,
-        (Some(_), None) => true,
-    };
-
-    external_unit_order || external_combat_order
-}
-
-fn clear_htn_orders_if_unchanged(
-    commands: &mut Commands,
-    entity: Entity,
-    unit_order: Option<&UnitOrder>,
-    combat_order: Option<&CombatOrder>,
-    issued_orders: IssuedOrders,
-) {
-    if unit_order.copied() == issued_orders.unit_order {
-        commands.entity(entity).remove::<UnitOrder>();
-    }
-
-    if combat_order.copied() == issued_orders.combat_order {
-        commands.entity(entity).remove::<CombatOrder>();
-    }
+    is_player_sourced(unit_source) || is_player_sourced(combat_source)
 }
 
 fn trace_plan_created(trace: &mut DecisionTrace, root: TaskId, domain: &Domain, plan: &Plan) {
@@ -578,12 +330,16 @@ fn trace_plan_created(trace: &mut DecisionTrace, root: TaskId, domain: &Domain, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actors::units::{Allegiance, Item, ItemKind, Rank, Role, Side};
+    use crate::actors::units::{Allegiance, Health, Inventory, Item, ItemKind, Rank, Role, Side};
     use crate::ai::htn::domain::{
         DomainBuilder, Method, always, bind_fire_at_nearest_hostile, bind_hold, no_effect,
     };
+    use crate::ai::htn::operators::BoundOperator;
     use crate::ai::htn::state::{HostileBelief, PlannerState};
-    use crate::ai::perception::{Contact, ContactType};
+    use crate::ai::htn::synthesis::synthesize_beliefs;
+    use crate::ai::perception::{Contact, ContactKind, ContactType, PerceptionMemory};
+    use crate::gameplay::simulation::SimulationClock;
+    use crate::gameplay::spatial::BattlefieldPosition;
     use crate::intel::ReportedLifeStatus;
 
     fn inventory(ammo: u32) -> Inventory {
@@ -635,8 +391,25 @@ mod tests {
         builder.build(root)
     }
 
+    /// Bundle every component `synthesize_beliefs` reads, so tests can run the
+    /// real synthesis system instead of hand-building `PlannerBelief`.
+    fn belief_inputs(
+        world: &mut World,
+        entity: Entity,
+        health: Health,
+        inventory: Inventory,
+        memory: PerceptionMemory,
+    ) {
+        world.entity_mut(entity).insert((
+            health,
+            inventory,
+            memory,
+            PlannerBelief::default(),
+        ));
+    }
+
     fn spawn_autonomous(world: &mut World) -> Entity {
-        world
+        let entity = world
             .spawn((
                 Soldier {
                     rank: Rank::Private,
@@ -644,17 +417,23 @@ mod tests {
                 },
                 Alive,
                 Autonomous,
+                DomainRef(DomainId::Soldier),
                 Allegiance { side: Side::Blue },
                 BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory::default(),
                 DecisionTrace::default(),
             ))
-            .id()
+            .id();
+        belief_inputs(
+            world,
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory::default(),
+        );
+        entity
     }
 
     #[test]
@@ -663,9 +442,12 @@ mod tests {
         app.insert_resource(SimulationClock::default())
             .insert_resource(RecentResolvedShots::default())
             .insert_resource(HtnDomainRegistry {
-                soldier: Some(test_domain()),
+                domains: HashMap::from([(DomainId::Soldier, test_domain())]),
             })
-            .add_systems(Update, deliberate_autonomous_units);
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
 
         let entity = spawn_autonomous(app.world_mut());
         app.update();
@@ -680,23 +462,26 @@ mod tests {
     }
 
     /// Regression test: real soldiers spawn with `CombatOrder::HoldFire` as their
-    /// default posture (see `spawn_soldier_at`). That default must not read as an
-    /// "external order" that suppresses autonomous planning, or every autonomous
-    /// unit is permanently inert.
+    /// default posture (see `spawn_soldier_at`), tagged `CombatOrderSource::doctrine()`.
+    /// That default must not read as an "external order" that suppresses autonomous
+    /// planning, or every autonomous unit is permanently inert.
     #[test]
     fn deliberation_creates_runner_despite_default_hold_fire_posture() {
         let mut app = App::new();
         app.insert_resource(SimulationClock::default())
             .insert_resource(RecentResolvedShots::default())
             .insert_resource(HtnDomainRegistry {
-                soldier: Some(test_domain()),
+                domains: HashMap::from([(DomainId::Soldier, test_domain())]),
             })
-            .add_systems(Update, deliberate_autonomous_units);
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
 
         let entity = spawn_autonomous(app.world_mut());
         app.world_mut()
             .entity_mut(entity)
-            .insert(CombatOrder::HoldFire);
+            .insert((CombatOrder::HoldFire, CombatOrderSource::doctrine()));
         app.update();
 
         assert!(
@@ -718,9 +503,7 @@ mod tests {
     #[test]
     fn pending_hold_dispatches_orders_and_starts_step() {
         let mut app = App::new();
-        app.insert_resource(SimulationClock::default())
-            .insert_resource(RecentResolvedShots::default())
-            .add_systems(Update, start_pending_steps);
+        app.add_systems(Update, start_pending_steps);
 
         let domain = test_domain();
         let plan = plan(&domain, &super::super::state::PlannerState::default()).unwrap();
@@ -733,14 +516,8 @@ mod tests {
                 },
                 Alive,
                 Autonomous,
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory::default(),
                 DecisionTrace::default(),
+                PlannerBelief::default(),
                 PlanRunner {
                     plan,
                     current: 0,
@@ -753,7 +530,6 @@ mod tests {
                         under_fire: false,
                         has_move_target: false,
                     },
-                    issued_orders: IssuedOrders::default(),
                 },
             ))
             .id();
@@ -769,6 +545,17 @@ mod tests {
             CombatOrder::HoldFire
         ));
         assert_eq!(
+            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            crate::gameplay::orders::OrderSource::Htn
+        );
+        assert_eq!(
+            app.world()
+                .get::<CombatOrderSource>(entity)
+                .unwrap()
+                .source,
+            crate::gameplay::orders::OrderSource::Htn
+        );
+        assert_eq!(
             app.world().get::<PlanRunner>(entity).unwrap().step_state,
             StepState::Running
         );
@@ -783,7 +570,7 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(SimulationClock::default())
             .insert_resource(HtnDomainRegistry {
-                soldier: Some(domain),
+                domains: HashMap::from([(DomainId::Soldier, domain)]),
             })
             .insert_resource(RecentResolvedShots {
                 shots: vec![ResolvedShot {
@@ -798,43 +585,48 @@ mod tests {
                     tracer_length_m: 8.0,
                 }],
             })
-            .add_systems(Update, deliberate_autonomous_units);
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                Soldier {
-                    rank: Rank::Private,
-                    role: Role::Rifleman,
+        let entity = app.world_mut().spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Alive,
+            Autonomous,
+            DomainRef(DomainId::Soldier),
+            Allegiance { side: Side::Blue },
+            BattlefieldPosition(Vec2::ZERO),
+            crate::ai::perception::AuditorySensor { range_m: 10.0 },
+            DecisionTrace::default(),
+            PlanRunner {
+                plan: old_plan,
+                current: 0,
+                step_state: StepState::Running,
+                last_state_digest: PlannerStateDigest {
+                    nearest_hostile: None,
+                    hostile_fresh: false,
+                    health_band: 2,
+                    has_ammo: true,
+                    under_fire: false,
+                    has_move_target: false,
                 },
-                Alive,
-                Autonomous,
-                Allegiance { side: Side::Blue },
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                AuditorySensor { range_m: 10.0 },
-                PerceptionMemory::default(),
-                DecisionTrace::default(),
-                PlanRunner {
-                    plan: old_plan,
-                    current: 0,
-                    step_state: StepState::Running,
-                    last_state_digest: PlannerStateDigest {
-                        nearest_hostile: None,
-                        hostile_fresh: false,
-                        health_band: 2,
-                        has_ammo: true,
-                        under_fire: false,
-                        has_move_target: false,
-                    },
-                    issued_orders: IssuedOrders::default(),
-                },
-            ))
-            .id();
+            },
+        ));
+        let entity = entity.id();
+        belief_inputs(
+            app.world_mut(),
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory::default(),
+        );
 
         app.update();
 
@@ -857,45 +649,64 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(SimulationClock::default())
             .insert_resource(HtnDomainRegistry {
-                soldier: Some(domain),
+                domains: HashMap::from([(DomainId::Soldier, domain)]),
             })
             .insert_resource(RecentResolvedShots::default())
-            .add_systems(Update, deliberate_autonomous_units);
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                Soldier {
-                    rank: Rank::Private,
-                    role: Role::Rifleman,
+        let entity = app.world_mut().spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Alive,
+            Autonomous,
+            DomainRef(DomainId::Soldier),
+            Allegiance { side: Side::Blue },
+            BattlefieldPosition(Vec2::ZERO),
+            DecisionTrace::default(),
+            PlanRunner {
+                plan: old_plan,
+                current: 0,
+                step_state: StepState::Running,
+                last_state_digest: PlannerStateDigest {
+                    nearest_hostile: None,
+                    hostile_fresh: false,
+                    health_band: 2,
+                    has_ammo: true,
+                    under_fire: true,
+                    has_move_target: false,
                 },
-                Alive,
-                Autonomous,
-                Allegiance { side: Side::Blue },
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory::default(),
-                DecisionTrace::default(),
-                PlanRunner {
-                    plan: old_plan,
-                    current: 0,
-                    step_state: StepState::Running,
-                    last_state_digest: PlannerStateDigest {
-                        nearest_hostile: None,
-                        hostile_fresh: false,
-                        health_band: 2,
-                        has_ammo: true,
-                        under_fire: true,
-                        has_move_target: false,
-                    },
-                    issued_orders: IssuedOrders::default(),
-                },
-            ))
-            .id();
+            },
+        ));
+        let entity = entity.id();
+        belief_inputs(
+            app.world_mut(),
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory::default(),
+        );
+        // Force `under_fire` in the synthesized belief by seeding a nearby
+        // fresh hostile contact (see synthesis::under_fire_from_contacts).
+        app.world_mut().entity_mut(entity).insert(PerceptionMemory {
+            contacts: vec![Contact {
+                target: Entity::from_raw_u32(99).unwrap(),
+                last_seen_position_m: Vec2::new(1.0, 0.0),
+                last_seen_time_s: 0.0,
+                last_seen_tick: 0,
+                confidence: 1.0,
+                observed_life_status: ReportedLifeStatus::Alive,
+                kind: ContactKind::Visual,
+                contact_type: ContactType::Hostile,
+            }],
+        });
 
         app.update();
 
@@ -920,9 +731,7 @@ mod tests {
     #[test]
     fn running_move_succeeds_when_order_removed() {
         let mut app = App::new();
-        app.insert_resource(SimulationClock::default())
-            .insert_resource(RecentResolvedShots::default())
-            .add_systems(Update, advance_plan_execution);
+        app.add_systems(Update, advance_plan_execution);
 
         let mut builder = DomainBuilder::new();
         let mov = builder.primitive(
@@ -946,14 +755,8 @@ mod tests {
                 },
                 Alive,
                 Autonomous,
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory::default(),
                 DecisionTrace::default(),
+                PlannerBelief::default(),
                 PlanRunner {
                     plan,
                     current: 0,
@@ -966,7 +769,6 @@ mod tests {
                         under_fire: false,
                         has_move_target: false,
                     },
-                    issued_orders: IssuedOrders::default(),
                 },
             ))
             .id();
@@ -989,9 +791,12 @@ mod tests {
         app.insert_resource(SimulationClock::default())
             .insert_resource(RecentResolvedShots::default())
             .insert_resource(HtnDomainRegistry {
-                soldier: Some(test_domain()),
+                domains: HashMap::from([(DomainId::Soldier, test_domain())]),
             })
-            .add_systems(Update, deliberate_autonomous_units);
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
 
         let mut builder = DomainBuilder::new();
         let mov = builder.primitive(
@@ -1009,51 +814,53 @@ mod tests {
         let player_order = UnitOrder::MoveTo {
             destination_m: Vec2::new(5.0, 0.0),
         };
-        let entity = app
-            .world_mut()
-            .spawn((
-                Soldier {
-                    rank: Rank::Private,
-                    role: Role::Rifleman,
+        let entity = app.world_mut().spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Alive,
+            Autonomous,
+            DomainRef(DomainId::Soldier),
+            Allegiance { side: Side::Blue },
+            BattlefieldPosition(Vec2::ZERO),
+            DecisionTrace::default(),
+            player_order,
+            UnitOrderSource::player(),
+            PlanRunner {
+                plan,
+                current: 0,
+                step_state: StepState::Running,
+                last_state_digest: PlannerStateDigest {
+                    nearest_hostile: None,
+                    hostile_fresh: false,
+                    health_band: 2,
+                    has_ammo: true,
+                    under_fire: false,
+                    has_move_target: true,
                 },
-                Alive,
-                Autonomous,
-                Allegiance { side: Side::Blue },
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory::default(),
-                DecisionTrace::default(),
-                player_order,
-                PlanRunner {
-                    plan,
-                    current: 0,
-                    step_state: StepState::Running,
-                    last_state_digest: PlannerStateDigest {
-                        nearest_hostile: None,
-                        hostile_fresh: false,
-                        health_band: 2,
-                        has_ammo: true,
-                        under_fire: false,
-                        has_move_target: true,
-                    },
-                    issued_orders: IssuedOrders {
-                        unit_order: Some(UnitOrder::MoveTo {
-                            destination_m: Vec2::new(1.0, 0.0),
-                        }),
-                        combat_order: None,
-                    },
-                },
-            ))
-            .id();
+            },
+        ));
+        let entity = entity.id();
+        belief_inputs(
+            app.world_mut(),
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory::default(),
+        );
 
         app.update();
 
         assert!(app.world().get::<PlanRunner>(entity).is_none());
         assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
+        assert_eq!(
+            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            crate::gameplay::orders::OrderSource::Player
+        );
         assert!(
             app.world()
                 .get::<DecisionTrace>(entity)
@@ -1066,6 +873,74 @@ mod tests {
                     }
                 ))
         );
+    }
+
+    /// An entity that has an autonomous plan running and a player-sourced
+    /// `UnitOrder` must have its runner torn down without the order (or its
+    /// provenance) being cleared.
+    #[test]
+    fn deliberation_removes_runner_but_preserves_player_order_and_source() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock::default())
+            .insert_resource(RecentResolvedShots::default())
+            .insert_resource(HtnDomainRegistry {
+                domains: HashMap::from([(DomainId::Soldier, test_domain())]),
+            })
+            .add_systems(
+                Update,
+                (synthesize_beliefs, deliberate_autonomous_units).chain(),
+            );
+
+        let domain = test_domain();
+        let running_plan = plan(&domain, &PlannerState::default()).unwrap();
+        let player_order = UnitOrder::MoveTo {
+            destination_m: Vec2::new(3.0, 4.0),
+        };
+
+        let entity = app.world_mut().spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Alive,
+            Autonomous,
+            DomainRef(DomainId::Soldier),
+            Allegiance { side: Side::Blue },
+            BattlefieldPosition(Vec2::ZERO),
+            DecisionTrace::default(),
+            player_order,
+            UnitOrderSource::player(),
+            PlanRunner {
+                plan: running_plan,
+                current: 0,
+                step_state: StepState::Running,
+                last_state_digest: PlannerStateDigest {
+                    nearest_hostile: None,
+                    hostile_fresh: false,
+                    health_band: 2,
+                    has_ammo: true,
+                    under_fire: false,
+                    has_move_target: true,
+                },
+            },
+        ));
+        let entity = entity.id();
+        belief_inputs(
+            app.world_mut(),
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory::default(),
+        );
+
+        app.update();
+
+        assert!(app.world().get::<PlanRunner>(entity).is_none());
+        assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
+        assert!(app.world().get::<UnitOrderSource>(entity).is_some());
     }
 
     #[test]
@@ -1089,15 +964,15 @@ mod tests {
             builder.build(root)
         }
 
-        let mut world = World::new();
-        let target_a = world.spawn_empty().id();
-        let target_b = world.spawn_empty().id();
+        // Entity id used only to build `old_plan`'s bound operator; a distinct,
+        // real `target_a` is spawned below and used on the actual test entity.
+        let placeholder_target = Entity::from_raw_u32(1).unwrap();
         let domain = engage_domain();
         let old_plan = plan(
             &domain,
             &PlannerState {
                 nearest_hostile: Some(HostileBelief {
-                    entity: target_a,
+                    entity: placeholder_target,
                     position_m: Vec2::new(1.0, 0.0),
                     confidence: 1.0,
                     last_seen_tick: 0,
@@ -1117,59 +992,65 @@ mod tests {
         })
         .insert_resource(RecentResolvedShots::default())
         .insert_resource(HtnDomainRegistry {
-            soldier: Some(domain),
+            domains: HashMap::from([(DomainId::Soldier, domain)]),
         })
-        .add_systems(Update, deliberate_autonomous_units);
+        .add_systems(
+            Update,
+            (synthesize_beliefs, deliberate_autonomous_units).chain(),
+        );
 
-        let entity = app
-            .world_mut()
-            .spawn((
-                Soldier {
-                    rank: Rank::Private,
-                    role: Role::Rifleman,
+        let target_a = app.world_mut().spawn_empty().id();
+        let target_b = app.world_mut().spawn_empty().id();
+
+        let entity = app.world_mut().spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Alive,
+            Autonomous,
+            DomainRef(DomainId::Soldier),
+            Allegiance { side: Side::Blue },
+            BattlefieldPosition(Vec2::ZERO),
+            DecisionTrace::default(),
+            CombatOrder::FireAt { target: target_a },
+            CombatOrderSource::htn(),
+            PlanRunner {
+                plan: old_plan,
+                current: 0,
+                step_state: StepState::Running,
+                last_state_digest: PlannerStateDigest {
+                    nearest_hostile: Some(target_a),
+                    hostile_fresh: true,
+                    health_band: 2,
+                    has_ammo: true,
+                    under_fire: false,
+                    has_move_target: false,
                 },
-                Alive,
-                Autonomous,
-                Allegiance { side: Side::Blue },
-                BattlefieldPosition(Vec2::ZERO),
-                Health {
-                    current: 100,
-                    max: 100,
-                },
-                inventory(10),
-                PerceptionMemory {
-                    contacts: vec![Contact {
-                        target: target_b,
-                        last_seen_position_m: Vec2::new(2.0, 0.0),
-                        last_seen_time_s: 0.0,
-                        last_seen_tick: 1,
-                        confidence: 1.0,
-                        observed_life_status: ReportedLifeStatus::Alive,
-                        kind: ContactKind::Visual,
-                        contact_type: ContactType::Hostile,
-                    }],
-                },
-                DecisionTrace::default(),
-                CombatOrder::FireAt { target: target_a },
-                PlanRunner {
-                    plan: old_plan,
-                    current: 0,
-                    step_state: StepState::Running,
-                    last_state_digest: PlannerStateDigest {
-                        nearest_hostile: Some(target_a),
-                        hostile_fresh: true,
-                        health_band: 2,
-                        has_ammo: true,
-                        under_fire: false,
-                        has_move_target: false,
-                    },
-                    issued_orders: IssuedOrders {
-                        unit_order: None,
-                        combat_order: Some(CombatOrder::FireAt { target: target_a }),
-                    },
-                },
-            ))
-            .id();
+            },
+        ));
+        let entity = entity.id();
+        belief_inputs(
+            app.world_mut(),
+            entity,
+            Health {
+                current: 100,
+                max: 100,
+            },
+            inventory(10),
+            PerceptionMemory {
+                contacts: vec![Contact {
+                    target: target_b,
+                    last_seen_position_m: Vec2::new(2.0, 0.0),
+                    last_seen_time_s: 0.0,
+                    last_seen_tick: 1,
+                    confidence: 1.0,
+                    observed_life_status: ReportedLifeStatus::Alive,
+                    kind: ContactKind::Visual,
+                    contact_type: ContactType::Hostile,
+                }],
+            },
+        );
 
         app.update();
 
@@ -1180,7 +1061,7 @@ mod tests {
             BoundOperator::FireAt { target: target_b }
         );
         assert_eq!(runner.step_state, StepState::Pending);
-        assert_eq!(runner.issued_orders, IssuedOrders::default());
         assert!(app.world().get::<CombatOrder>(entity).is_none());
+        assert!(app.world().get::<CombatOrderSource>(entity).is_none());
     }
 }

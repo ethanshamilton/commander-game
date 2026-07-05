@@ -1,5 +1,6 @@
+use super::executor::{Autonomous, RecentResolvedShots};
 use super::state::{HostileBelief, PlannerState};
-use crate::actors::units::{Health, Inventory};
+use crate::actors::units::{Alive, Health, Inventory, Soldier};
 use crate::ai::perception::{AuditorySensor, Contact, ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::combat::ResolvedShot;
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
@@ -13,6 +14,44 @@ use std::cmp::Ordering;
 /// shot impacts supplied to synthesis.
 const UNDER_FIRE_CONTACT_MAX_STALENESS_TICKS: u64 = 20;
 const UNDER_FIRE_CONTACT_DISTANCE_M: f32 = 80.0;
+
+/// Per-unit planning snapshot, refreshed once per tick before Thinking systems run.
+/// This is the unit's belief state — the single input to deliberation, step
+/// dispatch, and step polling. Debug/trace views should read this, not raw memory.
+#[derive(Component, Debug, Clone, Default)]
+pub struct PlannerBelief {
+    pub state: PlannerState,
+}
+
+pub fn synthesize_beliefs(
+    clock: Res<SimulationClock>,
+    recent_shots: Res<RecentResolvedShots>,
+    mut units: Query<
+        (
+            &BattlefieldPosition,
+            &Health,
+            &Inventory,
+            &PerceptionMemory,
+            Option<&AuditorySensor>,
+            Option<&UnitOrder>,
+            &mut PlannerBelief,
+        ),
+        (With<Soldier>, With<Alive>, With<Autonomous>),
+    >,
+) {
+    for (position, health, inventory, memory, auditory, order, mut belief) in &mut units {
+        belief.state = synthesize_planner_state(
+            &clock,
+            position,
+            health,
+            inventory,
+            memory,
+            auditory,
+            order,
+            &recent_shots.shots,
+        );
+    }
+}
 
 pub fn synthesize_planner_state(
     clock: &SimulationClock,
