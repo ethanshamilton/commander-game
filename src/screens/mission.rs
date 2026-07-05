@@ -1125,15 +1125,6 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
         if unit.side == Side::Blue && matches!(unit.rank, Rank::Sergeant) {
             commands.entity(entity).insert(PlayerControlledUnit);
         }
-
-        if unit.side == Side::Red {
-            commands.entity(entity).insert((
-                Autonomous,
-                DecisionTrace::default(),
-                PlannerBelief::default(),
-                DomainRef(DomainId::Soldier),
-            ));
-        }
     }
 
     commands.insert_resource(CommandForest::from_assignments(
@@ -1204,6 +1195,10 @@ pub fn spawn_soldier_at(
             PerceptionMemory::default(),
             VoiceComms::default(),
             CommsLinks::default(),
+            Autonomous,
+            DecisionTrace::default(),
+            PlannerBelief::default(),
+            DomainRef(DomainId::Soldier),
         ))
         .id();
 

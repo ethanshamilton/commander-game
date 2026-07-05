@@ -44,9 +44,10 @@ around it, so the decomposition logic is unit-testable without spinning up an
   down the runner). Also owns `HtnDomainRegistry` (`DomainId -> Domain` map)
   and `DomainRef` (which domain a unit plans with).
 - **Arbitration** — provenance-based, not inference-based. See
-  `docs/gameplay/orders.md`: an order is "external" (must preempt/void
-  autonomous planning) iff its `OrderProvenance` source is `Player`. Htn- and
-  Doctrine-sourced orders never suppress planning.
+  `docs/gameplay/orders.md`: a player-sourced order is external for its own
+  order lane. Player movement blocks autonomous move/hold writes, but does not
+  block autonomous firing; player combat orders similarly block autonomous
+  combat writes. Htn- and Doctrine-sourced orders never suppress planning.
 - **`trace.rs`** — `DecisionTrace`/`TraceEvent`, a bounded ring buffer per unit
   recording plan creation/rejection/replan/step events, for debugging *why* a
   unit did what it did.
@@ -132,4 +133,6 @@ the existing soldier domain):
    of `DomainRef(DomainId::Soldier)` (see `spawn_soldier_at` in
    `screens/mission.rs` for the current spawn-time wiring pattern —
    `Autonomous` + `DecisionTrace::default()` + `PlannerBelief::default()` +
-   `DomainRef`).
+   `DomainRef`). All soldiers are currently spawned autonomous, including
+   player-side units, so direct player orders and HTN orders can be tested
+   together.

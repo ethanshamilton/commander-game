@@ -1,5 +1,5 @@
 use super::domain::{Domain, TaskId};
-use super::operators::StepPoll;
+use super::operators::{BoundOperator, StepPoll};
 use super::planner::{Plan, plan};
 use super::state::PlannerStateDigest;
 use super::synthesis::PlannerBelief;
@@ -115,7 +115,7 @@ pub fn deliberate_autonomous_units(
 
         match runner {
             Some(mut runner) => {
-                if has_external_order(unit_source, combat_source) {
+                if plan_conflicts_with_external_order(&runner.plan, unit_source, combat_source) {
                     trace.push(
                         trace_tick,
                         trace_elapsed_s,
@@ -142,6 +142,18 @@ pub fn deliberate_autonomous_units(
                     );
                     continue;
                 };
+
+                if plan_conflicts_with_external_order(&candidate, unit_source, combat_source) {
+                    runner.last_state_digest = digest;
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::ExternalOrderActive,
+                        },
+                    );
+                    continue;
+                }
 
                 if !should_adopt_candidate(&candidate, &runner.plan) {
                     runner.last_state_digest = digest;
@@ -180,17 +192,6 @@ pub fn deliberate_autonomous_units(
                 };
             }
             None => {
-                if has_external_order(unit_source, combat_source) {
-                    trace.push(
-                        trace_tick,
-                        trace_elapsed_s,
-                        TraceEvent::PlanRejected {
-                            reason: PlanRejectionReason::ExternalOrderActive,
-                        },
-                    );
-                    continue;
-                }
-
                 let Some(candidate) = plan(domain, state) else {
                     trace.push(
                         trace_tick,
@@ -201,6 +202,17 @@ pub fn deliberate_autonomous_units(
                     );
                     continue;
                 };
+
+                if plan_conflicts_with_external_order(&candidate, unit_source, combat_source) {
+                    trace.push(
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanRejected {
+                            reason: PlanRejectionReason::ExternalOrderActive,
+                        },
+                    );
+                    continue;
+                }
 
                 trace.push(
                     trace_tick,
@@ -376,14 +388,32 @@ fn plan_bound_operators_differ(a: &Plan, b: &Plan) -> bool {
             .any(|(a_step, b_step)| a_step.operator != b_step.operator)
 }
 
-/// True if either order component present on the entity was issued directly
-/// by the player. Player-sourced orders preempt autonomous planning; Htn- and
-/// Doctrine-sourced orders never do (see `docs/gameplay/orders.md`).
-fn has_external_order(
+/// True if a plan would overwrite an order lane currently controlled by the player.
+///
+/// `UnitOrder` and `CombatOrder` are orthogonal: a player movement order should
+/// not suppress an autonomous fire decision, but it must block autonomous move/hold
+/// steps that would replace the player's movement directive. Same for explicit
+/// player combat orders.
+fn plan_conflicts_with_external_order(
+    plan: &Plan,
     unit_source: Option<&UnitOrderSource>,
     combat_source: Option<&CombatOrderSource>,
 ) -> bool {
-    is_player_sourced(unit_source) || is_player_sourced(combat_source)
+    let player_unit_order = is_player_sourced(unit_source);
+    let player_combat_order = is_player_sourced(combat_source);
+
+    plan.steps.iter().any(|step| {
+        (player_unit_order && operator_writes_unit_order(step.operator))
+            || (player_combat_order && operator_writes_combat_order(step.operator))
+    })
+}
+
+fn operator_writes_unit_order(operator: BoundOperator) -> bool {
+    matches!(operator, BoundOperator::Hold | BoundOperator::MoveTo { .. })
+}
+
+fn operator_writes_combat_order(operator: BoundOperator) -> bool {
+    matches!(operator, BoundOperator::Hold | BoundOperator::FireAt { .. })
 }
 
 fn trace_plan_created(
@@ -950,6 +980,67 @@ mod tests {
     /// An entity that has an autonomous plan running and a player-sourced
     /// `UnitOrder` must have its runner torn down without the order (or its
     /// provenance) being cleared.
+    #[test]
+    fn player_move_order_does_not_block_autonomous_fire() {
+        let mut app = App::new();
+        app.insert_resource(SimulationClock::default())
+            .insert_resource(RecentResolvedShots::default())
+            .insert_resource(HtnDomainRegistry {
+                domains: HashMap::from([(
+                    DomainId::Soldier,
+                    super::super::soldier::build_soldier_domain(),
+                )]),
+            })
+            .add_systems(
+                Update,
+                (
+                    synthesize_beliefs,
+                    deliberate_autonomous_units,
+                    start_pending_steps,
+                )
+                    .chain(),
+            );
+
+        let target = Entity::from_raw_u32(99).unwrap();
+        let player_order = UnitOrder::MoveTo {
+            destination_m: Vec2::new(5.0, 0.0),
+        };
+        let entity = spawn_autonomous(app.world_mut());
+        app.world_mut().entity_mut(entity).insert((
+            player_order,
+            UnitOrderSource::player(),
+            PerceptionMemory {
+                contacts: vec![Contact {
+                    target,
+                    last_seen_position_m: Vec2::new(10.0, 0.0),
+                    last_seen_time_s: 0.0,
+                    last_seen_tick: 0,
+                    confidence: 1.0,
+                    observed_life_status: ReportedLifeStatus::Alive,
+                    kind: ContactKind::Visual,
+                    contact_type: ContactType::Hostile,
+                }],
+            },
+        ));
+
+        app.update();
+
+        assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
+        assert_eq!(
+            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            crate::gameplay::orders::OrderSource::Player
+        );
+        assert_eq!(
+            app.world().get::<CombatOrder>(entity),
+            Some(&CombatOrder::FireAt { target })
+        );
+        assert_eq!(
+            app.world().get::<CombatOrderSource>(entity).unwrap().source,
+            crate::gameplay::orders::OrderSource::Htn
+        );
+        assert!(app.world().get::<PlanRunner>(entity).is_some());
+    }
+
     #[test]
     fn deliberation_removes_runner_but_preserves_player_order_and_source() {
         let mut app = App::new();

@@ -8,7 +8,7 @@ without duplicating it per order type.
 
 Three sources:
 
-- **Player** — a direct player directive. Preempts autonomous (HTN) planning.
+- **Player** — a direct player directive. Preempts autonomous (HTN) writes to the same order lane.
 - **Htn** — issued by the unit's own HTN executor. Cleared by the executor
   once the step completes/fails, or if the planner tears down the runner.
 - **Doctrine** — a default posture (e.g. spawn-time `CombatOrder::HoldFire`,
@@ -19,6 +19,8 @@ Three sources:
 on the same entity. Every site that inserts, removes, or overwrites an order
 component must do the same to its provenance in the same command batch.
 
-**Arbitration rule:** an order counts as "external" (i.e. must preempt/void
-HTN planning) if and only if its source is `Player`. Doctrine and Htn sources
-never count as external.
+**Arbitration rule:** an order counts as "external" for its own order lane if
+and only if its source is `Player`. Because `UnitOrder` and `CombatOrder` are
+orthogonal, a player `UnitOrder::MoveTo` blocks autonomous movement/hold steps
+that would overwrite the move order, but it does not block an autonomous
+`CombatOrder::FireAt`. Doctrine and Htn sources never count as external.

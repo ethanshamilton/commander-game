@@ -3,11 +3,12 @@
 use bevy::prelude::*;
 use std::marker::PhantomData;
 
-/// Who issued an order. Provenance decides arbitration: HTN planning yields to
-/// Player orders; Doctrine marks default postures that never suppress planning.
+/// Who issued an order. Provenance decides arbitration: HTN writes yield to
+/// player orders on the same order lane; Doctrine marks default postures that
+/// never suppress planning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderSource {
-    /// Direct player directive. Preempts autonomous planning.
+    /// Direct player directive. Preempts autonomous writes to the same order lane.
     Player,
     /// Issued by the unit's own HTN executor.
     Htn,
@@ -53,7 +54,7 @@ impl<O: Component> OrderProvenance<O> {
     }
 }
 
-/// True if the order (if present) came from the player and must preempt HTN planning.
+/// True if the order (if present) came from the player and owns this order lane.
 pub fn is_player_sourced<O: Component>(src: Option<&OrderProvenance<O>>) -> bool {
     src.is_some_and(|s| s.source == OrderSource::Player)
 }

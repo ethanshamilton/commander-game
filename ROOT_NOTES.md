@@ -9,6 +9,19 @@ Running/evergreen notes file for the project.
 ## COMMAND
 
 ### HIERARCHY
+- Eventually want to create a view in the left sidebar that shows the player's command tree. It shouldn't show the whole command forest, just the units and squads that the player has control over. Player can use that to select units or squads.
+
+### MISSIONS
+- The main intended way for players to interact with their units is via the assignment of missions. Any micromanagement, in other words, the direct assignment of orders, is a failure mode in the ideal state of this game. We need to be able to assign missions like "hold a line from (A,B) to (X,Y)" and then the player can assign squads to a mission and the squad leader becomes responsible for figuring out how to implement the orders to accomplish the mission.
+- Starter Mission types
+  - Hold Line
+    - Commander defines a line from (A,B) to (X,Y) and assigned squads maneuver to cover the line.
+  - Secure Perimeter
+    - Commander defines a circle or rectangle and assigned squads maneuver to cover the perimeter.
+  - Scout Area
+    - Commander defines a point, circle, or rectangle and assigned squads manuever to search the area. If any hostiles are identified, priority is to disengage and report information up the chain of command.
+  - Clear Area
+    - Commander defines a point, circle, or rectangle and assigned squads maneuver to search the area and engage any identified hostiles.
 
 ## COMMUNICATIONS
 - Enemies may be able to intercept communications based on the communication type and sensor ranges.
@@ -24,12 +37,12 @@ Running/evergreen notes file for the project.
   - In order for this to be useful when working with Move orders, we need to implement basic formations.
 
 ## AI
-- Still struggling to understand the HTN system a bit. Overall concepts make sense but implementation was done quickly and I need time for it to sink in.
   - I need to be able to intuit how given domains need to change when game mechanics are introduced so that I can effectively develop AI behaviors.
   - I wonder if there's a way to "learn" the domain for an HTN. Right now plan value is determined by how I order the tasks in the domain, but the best way to learn plan values would be through ML.
-- Want to implement trace viewer so we can start to analyze how AI units make decisions
 - TTK is extremely fast when enemy AI spots friendly units. Need to start working on delegation of actions i.e. fire at will to friendly units.
-- Need to start figuring out how to implement mission system. This will support higher levels of delegation so that we aren't trying to micromanage AI unit response times.
+
+### SOLDIER DOMAIN
+- Hold behavior should be updated to a routine search pattern. Unit simply rotates slowly to examine surroundings.
 
 ## COMBAT
 
