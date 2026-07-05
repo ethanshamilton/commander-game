@@ -23,3 +23,18 @@ Running/evergreen notes file for the project.
 - Implement multi-unit select (shift-click and mouse rectangle)
   - In order for this to be useful when working with Move orders, we need to implement basic formations.
 
+## AI
+- Still struggling to understand the HTN system a bit. Overall concepts make sense but implementation was done quickly and I need time for it to sink in.
+  - I need to be able to intuit how given domains need to change when game mechanics are introduced so that I can effectively develop AI behaviors.
+  - I wonder if there's a way to "learn" the domain for an HTN. Right now plan value is determined by how I order the tasks in the domain, but the best way to learn plan values would be through ML.
+- Want to implement trace viewer so we can start to analyze how AI units make decisions
+- TTK is extremely fast when enemy AI spots friendly units. Need to start working on delegation of actions i.e. fire at will to friendly units.
+- Need to start figuring out how to implement mission system. This will support higher levels of delegation so that we aren't trying to micromanage AI unit response times.
+
+## COMBAT
+
+### INFANTRY MECHANICS
+- Need to add stance (standing, crouch, prone) with corresponding effects on accuracy
+  - Standing reduces target unit's accuracy, makes it easier for enemies to hit (enemy unit's base accuracy value fully applies)
+  - Crouching increases target unit's accuracy, decreases move speed slightly. Reduces enemy unit's accuracy.
+  - Prone increases target unit's accuracy the most but narrows engagement cone and significantly reduces move speed. Significantly reduces enemy unit's accuracy.
