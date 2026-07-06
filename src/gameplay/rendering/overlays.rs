@@ -16,7 +16,10 @@ use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::intel::ReportedLifeStatus;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
-use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
+use crate::player::knowledge::{
+    CONTACT_RECENCY_TTL_TICKS, PlayerControlledUnit, PlayerTacticalKnowledge,
+    REPORT_RECENCY_TTL_TICKS,
+};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 
@@ -79,7 +82,9 @@ fn draw_selected_unit_sensor_cone(
         return;
     };
 
-    if allegiance.side == control.side && !knowledge.is_current(entity, clock.tick) {
+    if allegiance.side == control.side
+        && !knowledge.is_recently_reported(entity, clock.tick, REPORT_RECENCY_TTL_TICKS)
+    {
         return;
     }
 
@@ -144,7 +149,9 @@ fn draw_selected_unit_weapon_range(
         return;
     };
 
-    if allegiance.side != control.side || !knowledge.is_current(entity, clock.tick) {
+    if allegiance.side != control.side
+        || !knowledge.is_recently_reported(entity, clock.tick, REPORT_RECENCY_TTL_TICKS)
+    {
         return;
     }
 
@@ -208,7 +215,7 @@ fn draw_selected_unit_order(
         return;
     };
 
-    if !knowledge.is_current(entity, clock.tick) {
+    if !knowledge.is_recently_reported(entity, clock.tick, REPORT_RECENCY_TTL_TICKS) {
         return;
     }
 
@@ -272,7 +279,9 @@ fn draw_selected_unit_contacts(
         return;
     };
 
-    if allegiance.side == control.side && !knowledge.is_current(entity, clock.tick) {
+    if allegiance.side == control.side
+        && !knowledge.is_recently_reported(entity, clock.tick, REPORT_RECENCY_TTL_TICKS)
+    {
         return;
     }
 
@@ -355,7 +364,7 @@ fn draw_selected_unit_comms(
     };
 
     if selected_allegiance.side != control.side
-        || !knowledge.is_current(selected_entity, clock.tick)
+        || !knowledge.is_recently_reported(selected_entity, clock.tick, REPORT_RECENCY_TTL_TICKS)
     {
         return;
     }
@@ -475,9 +484,9 @@ fn visible_known_unit(
 ) -> Option<&crate::player::knowledge::KnownUnit> {
     let known = knowledge.get(entity)?;
     let visible = if known.side == player_side {
-        known.last_reported_tick == tick
+        tick.saturating_sub(known.last_reported_tick) <= REPORT_RECENCY_TTL_TICKS
     } else {
-        known.last_observed_tick == tick
+        tick.saturating_sub(known.last_observed_tick) <= CONTACT_RECENCY_TTL_TICKS
     };
 
     visible.then_some(known)

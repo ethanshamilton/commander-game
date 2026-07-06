@@ -1,12 +1,14 @@
 #![doc = include_str!("../../docs/player/selection.md")]
 
 use crate::GameState;
-use crate::actors::units::{Alive, Allegiance, Soldier};
+use crate::actors::units::Alive;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
-use crate::gameplay::comms::CommsGraph;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
+use crate::gameplay::packets::{
+    Address, OrderCommand, Outbox, PacketIdAllocator, PacketPayload, SeenPackets,
+};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
@@ -38,8 +40,6 @@ fn select_unit(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
-    control: Res<PlayerControl>,
-    clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
     mut selected: ResMut<SelectedUnit>,
 ) {
@@ -75,7 +75,6 @@ fn select_unit(
     selected.entity = knowledge
         .units
         .iter()
-        .filter(|unit| unit.side != control.side || unit.last_reported_tick == clock.tick)
         .filter_map(|unit| {
             let distance = unit
                 .last_known_position_m
@@ -96,10 +95,13 @@ fn issue_contextual_order(
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    graph: Res<CommsGraph>,
     command_forest: Res<CommandForest>,
+    mut packet_ids: ResMut<PacketIdAllocator>,
     controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
-    units: Query<&Allegiance, (With<Soldier>, With<Alive>)>,
+    mut packet_outboxes: Query<
+        (&mut Outbox, &mut SeenPackets),
+        (With<PlayerControlledUnit>, With<Alive>),
+    >,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Right) {
         return;
@@ -109,23 +111,17 @@ fn issue_contextual_order(
         return;
     };
 
-    let Ok(allegiance) = units.get(entity) else {
+    let Some(selected_unit) = knowledge.get(entity) else {
         return;
     };
 
-    if allegiance.side != control.side || !knowledge.is_current(entity, clock.tick) {
+    if selected_unit.side != control.side {
         return;
-    };
+    }
 
     let Ok(controlled_entity) = controlled.single() else {
         return;
     };
-
-    if !graph.can_reach(controlled_entity, entity, control.side, |entity| {
-        units.get(entity).ok().map(|allegiance| allegiance.side)
-    }) {
-        return;
-    }
 
     if !command_forest.can_command(controlled_entity, entity) {
         return;
@@ -155,27 +151,48 @@ fn issue_contextual_order(
         return;
     };
 
-    if let Some(target) =
-        hostile_unit_at_cursor(&knowledge, control.side, clock.tick, world_position)
-    {
-        commands
-            .entity(entity)
-            .insert((CombatOrder::FireAt { target }, CombatOrderSource::player()));
+    let order =
+        if let Some(target) = hostile_unit_at_cursor(&knowledge, control.side, world_position) {
+            OrderCommand::Combat(CombatOrder::FireAt { target })
+        } else {
+            OrderCommand::Unit(UnitOrder::MoveTo {
+                destination_m: world_position.map(to_meters),
+            })
+        };
+
+    if entity == controlled_entity {
+        match order {
+            OrderCommand::Unit(order) => {
+                commands
+                    .entity(entity)
+                    .insert((order, UnitOrderSource::player()));
+            }
+            OrderCommand::Combat(order) => {
+                commands
+                    .entity(entity)
+                    .insert((order, CombatOrderSource::player()));
+            }
+        }
         return;
     }
 
-    commands.entity(entity).insert((
-        UnitOrder::MoveTo {
-            destination_m: world_position.map(to_meters),
-        },
-        UnitOrderSource::player(),
-    ));
+    let Ok((mut outbox, mut seen)) = packet_outboxes.get_mut(controlled_entity) else {
+        return;
+    };
+
+    outbox.send(
+        &mut seen,
+        &mut packet_ids,
+        controlled_entity,
+        Address::Direct(entity),
+        clock.tick,
+        PacketPayload::OrderCommand(order),
+    );
 }
 
 fn hostile_unit_at_cursor(
     knowledge: &PlayerTacticalKnowledge,
     player_side: crate::actors::units::Side,
-    tick: u64,
     world_position: Vec2,
 ) -> Option<Entity> {
     let selection_radius = meters(SELECTION_RADIUS_M);
@@ -183,7 +200,7 @@ fn hostile_unit_at_cursor(
     knowledge
         .units
         .iter()
-        .filter(|unit| unit.side != player_side && unit.last_observed_tick == tick)
+        .filter(|unit| unit.side != player_side)
         .filter_map(|unit| {
             let distance = unit
                 .last_known_position_m

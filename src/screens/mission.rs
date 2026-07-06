@@ -23,7 +23,7 @@ use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::missions::{MissionDefinition, SelectedMission};
 use crate::player::control::PlayerControl;
-use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
+use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportCadence};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
@@ -1200,7 +1200,10 @@ pub fn spawn_soldier_at(
             Inbox::default(),
             Outbox::default(),
             SeenPackets::default(),
+            ReportCadence::default(),
             Autonomous,
+        ))
+        .insert((
             DecisionTrace::default(),
             PlannerBelief::default(),
             DomainRef(DomainId::Soldier),

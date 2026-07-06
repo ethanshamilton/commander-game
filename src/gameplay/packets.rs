@@ -1,11 +1,15 @@
 #![doc = include_str!("../../docs/gameplay/packets.md")]
 #![allow(dead_code)]
 
-use crate::actors::units::{Alive, Soldier};
+use crate::actors::units::{Alive, Side, Soldier};
 use crate::ai::perception::ContactType;
+use crate::gameplay::combat::CombatOrder;
+use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::{CommsGraph, update_comms_graph};
-use crate::gameplay::simulation::{SimulationClock, SimulationSet};
+use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
+use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
 use crate::intel::ReportedLifeStatus;
+use crate::player::knowledge::PlayerControlledUnit;
 use bevy::prelude::*;
 use std::collections::HashSet;
 
@@ -17,7 +21,12 @@ impl Plugin for PacketsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PacketIdAllocator>().add_systems(
             FixedUpdate,
-            (prune_stale_inbox_packets, deliver_packets, relay_packets)
+            (
+                prune_stale_inbox_packets,
+                deliver_packets,
+                relay_packets,
+                apply_order_commands,
+            )
                 .chain()
                 .in_set(SimulationSet::Comms)
                 .after(update_comms_graph),
@@ -72,16 +81,40 @@ pub struct InfoPacket {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PacketPayload {
     ContactReport(ContactClaim),
+    StatusReport(StatusClaim),
+    OrderCommand(OrderCommand),
+}
+
+/// Player-authored micro-order carried through the packet substrate.
+///
+/// This is intentionally one payload type with explicit order lanes. It keeps
+/// packet handling unified without pretending Rust can store arbitrary generic
+/// component types in one enum variant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OrderCommand {
+    Unit(UnitOrder),
+    Combat(CombatOrder),
 }
 
 /// Snapshot of a contact belief safe to transmit through comms.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContactClaim {
     pub subject: Entity,
+    pub side: Side,
     pub position_m: Vec2,
     pub observed_tick: u64,
     pub life_status: ReportedLifeStatus,
     pub contact_type: ContactType,
+}
+
+/// Snapshot of a unit's self-reported status.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusClaim {
+    pub subject: Entity,
+    pub side: Side,
+    pub position_m: Vec2,
+    pub observed_tick: u64,
+    pub life_status: ReportedLifeStatus,
 }
 
 /// Packets this unit wants to transmit on a future comms pass.
@@ -267,6 +300,58 @@ fn relay_inbox_for_entity(entity: Entity, inbox: &mut Inbox, outbox: &mut Outbox
     inbox.packets = retained;
 }
 
+/// Consume order-command packets addressed to this unit.
+///
+/// For now these represent only the player micro path: the packet origin must
+/// be the player-controlled command node and must have authority through the
+/// command forest. Successful commands install player-sourced order provenance;
+/// delegated AI directives should later use a separate goal/directive payload.
+fn apply_order_commands(
+    mut commands: Commands,
+    command_forest: Res<CommandForest>,
+    player_controlled: Query<(), With<PlayerControlledUnit>>,
+    mut units: Query<(Entity, &mut Inbox), (With<Soldier>, With<Alive>)>,
+) {
+    for (entity, mut inbox) in &mut units {
+        let mut retained = Vec::with_capacity(inbox.packets.len());
+
+        for entry in inbox.packets.drain(..) {
+            let is_order_for_me = matches!(entry.packet.address, Address::Direct(target) if target == entity)
+                && matches!(&entry.packet.payload, PacketPayload::OrderCommand(_));
+
+            if !is_order_for_me {
+                retained.push(entry);
+                continue;
+            }
+
+            if player_controlled.get(entry.packet.origin).is_err()
+                || !command_forest.can_command(entry.packet.origin, entity)
+            {
+                continue;
+            }
+
+            let PacketPayload::OrderCommand(order) = entry.packet.payload else {
+                unreachable!("is_order_for_me checked the payload variant");
+            };
+
+            match order {
+                OrderCommand::Unit(order) => {
+                    commands
+                        .entity(entity)
+                        .insert((order, UnitOrderSource::player()));
+                }
+                OrderCommand::Combat(order) => {
+                    commands
+                        .entity(entity)
+                        .insert((order, CombatOrderSource::player()));
+                }
+            }
+        }
+
+        inbox.packets = retained;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +368,7 @@ mod tests {
             created_tick: 7,
             payload: PacketPayload::ContactReport(ContactClaim {
                 subject,
+                side: Side::Red,
                 position_m: Vec2::new(1.0, 2.0),
                 observed_tick: 6,
                 life_status: ReportedLifeStatus::Alive,
@@ -312,6 +398,31 @@ mod tests {
         entity.id()
     }
 
+    fn link(world: &mut World, from: Entity, to: Entity) {
+        world
+            .get_mut::<CommsLinks>(from)
+            .unwrap()
+            .links
+            .push(CommsLink {
+                target: to,
+                kind: CommsKind::Voice,
+            });
+    }
+
+    fn run_packet_command_tick(world: &mut World) {
+        world.run_system_once(update_comms_graph).unwrap();
+        world.run_system_once(deliver_packets).unwrap();
+        world.run_system_once(relay_packets).unwrap();
+        world.run_system_once(apply_order_commands).unwrap();
+        world.flush();
+    }
+
+    fn insert_command_forest(world: &mut World, superior: Entity, subordinate: Entity) {
+        let mut forest = CommandForest::default();
+        forest.set_superior(subordinate, Some(superior)).unwrap();
+        world.insert_resource(forest);
+    }
+
     #[test]
     fn outbox_send_allocates_packet_and_marks_sender_seen() {
         let mut world = World::new();
@@ -329,6 +440,7 @@ mod tests {
             3,
             PacketPayload::ContactReport(ContactClaim {
                 subject: target,
+                side: Side::Red,
                 position_m: Vec2::ZERO,
                 observed_tick: 2,
                 life_status: ReportedLifeStatus::Alive,
@@ -792,6 +904,161 @@ mod tests {
         );
 
         assert!(second_hop.iter().all(|(receiver, _)| *receiver != a));
+    }
+
+    #[test]
+    fn order_command_does_not_apply_until_packet_is_received() {
+        let mut world = World::new();
+        world.init_resource::<CommsGraph>();
+        let player = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        world.entity_mut(player).insert(PlayerControlledUnit);
+        insert_command_forest(&mut world, player, subordinate);
+        link(&mut world, player, subordinate);
+
+        let order = UnitOrder::MoveTo {
+            destination_m: Vec2::new(10.0, 20.0),
+        };
+        world
+            .get_mut::<Outbox>(player)
+            .unwrap()
+            .packets
+            .push(InfoPacket {
+                id: PacketId(1),
+                origin: player,
+                address: Address::Direct(subordinate),
+                created_tick: 0,
+                payload: PacketPayload::OrderCommand(OrderCommand::Unit(order)),
+            });
+        world
+            .get_mut::<SeenPackets>(player)
+            .unwrap()
+            .ids
+            .insert(PacketId(1));
+
+        assert!(world.get::<UnitOrder>(subordinate).is_none());
+
+        run_packet_command_tick(&mut world);
+
+        assert_eq!(world.get::<UnitOrder>(subordinate), Some(&order));
+        assert_eq!(
+            world
+                .get::<UnitOrderSource>(subordinate)
+                .map(|src| src.source),
+            Some(crate::gameplay::orders::OrderSource::Player)
+        );
+        assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
+    }
+
+    #[test]
+    fn two_hop_order_command_applies_on_second_comms_tick() {
+        let mut world = World::new();
+        world.init_resource::<CommsGraph>();
+        let player = spawn_packet_soldier(&mut world, true);
+        let relay = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        world.entity_mut(player).insert(PlayerControlledUnit);
+        insert_command_forest(&mut world, player, subordinate);
+        link(&mut world, player, relay);
+        link(&mut world, relay, player);
+        link(&mut world, relay, subordinate);
+
+        let order = CombatOrder::HoldFire;
+        world
+            .get_mut::<Outbox>(player)
+            .unwrap()
+            .packets
+            .push(InfoPacket {
+                id: PacketId(1),
+                origin: player,
+                address: Address::Direct(subordinate),
+                created_tick: 0,
+                payload: PacketPayload::OrderCommand(OrderCommand::Combat(order)),
+            });
+        world
+            .get_mut::<SeenPackets>(player)
+            .unwrap()
+            .ids
+            .insert(PacketId(1));
+
+        run_packet_command_tick(&mut world);
+        assert!(world.get::<CombatOrder>(subordinate).is_none());
+
+        run_packet_command_tick(&mut world);
+        assert_eq!(world.get::<CombatOrder>(subordinate), Some(&order));
+        assert_eq!(
+            world
+                .get::<CombatOrderSource>(subordinate)
+                .map(|src| src.source),
+            Some(crate::gameplay::orders::OrderSource::Player)
+        );
+    }
+
+    #[test]
+    fn unreachable_order_command_never_applies() {
+        let mut world = World::new();
+        world.init_resource::<CommsGraph>();
+        let player = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        world.entity_mut(player).insert(PlayerControlledUnit);
+        insert_command_forest(&mut world, player, subordinate);
+
+        world
+            .get_mut::<Outbox>(player)
+            .unwrap()
+            .packets
+            .push(InfoPacket {
+                id: PacketId(1),
+                origin: player,
+                address: Address::Direct(subordinate),
+                created_tick: 0,
+                payload: PacketPayload::OrderCommand(OrderCommand::Unit(UnitOrder::Hold)),
+            });
+        world
+            .get_mut::<SeenPackets>(player)
+            .unwrap()
+            .ids
+            .insert(PacketId(1));
+
+        for _ in 0..3 {
+            run_packet_command_tick(&mut world);
+        }
+
+        assert!(world.get::<UnitOrder>(subordinate).is_none());
+    }
+
+    #[test]
+    fn unauthorized_order_command_is_consumed_but_ignored() {
+        let mut world = World::new();
+        world.init_resource::<CommsGraph>();
+        let player = spawn_packet_soldier(&mut world, true);
+        let impostor = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        world.entity_mut(player).insert(PlayerControlledUnit);
+        insert_command_forest(&mut world, player, subordinate);
+        link(&mut world, impostor, subordinate);
+
+        world
+            .get_mut::<Outbox>(impostor)
+            .unwrap()
+            .packets
+            .push(InfoPacket {
+                id: PacketId(1),
+                origin: impostor,
+                address: Address::Direct(subordinate),
+                created_tick: 0,
+                payload: PacketPayload::OrderCommand(OrderCommand::Unit(UnitOrder::Hold)),
+            });
+        world
+            .get_mut::<SeenPackets>(impostor)
+            .unwrap()
+            .ids
+            .insert(PacketId(1));
+
+        run_packet_command_tick(&mut world);
+
+        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
     }
 
     #[test]

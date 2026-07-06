@@ -8,6 +8,7 @@ use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::packets::{Inbox, Outbox, SeenPackets};
 use crate::gameplay::simulation::UnitOrder;
+use crate::player::knowledge::ReportCadence;
 use bevy::prelude::*;
 
 pub struct UnitLifecyclePlugin;
@@ -44,7 +45,8 @@ pub fn kill_unit(commands: &mut Commands, entity: Entity) {
         .remove::<PerceptionMemory>()
         .remove::<Inbox>()
         .remove::<Outbox>()
-        .remove::<SeenPackets>();
+        .remove::<SeenPackets>()
+        .remove::<ReportCadence>();
 }
 
 fn warn_invalid_life_status(
