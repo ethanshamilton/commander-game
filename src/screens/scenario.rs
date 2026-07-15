@@ -1,4 +1,4 @@
-#![doc = include_str!("../../docs/screens/mission.md")]
+#![doc = include_str!("../../docs/screens/scenario.md")]
 
 use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
@@ -16,15 +16,15 @@ use crate::gameplay::command::{CommandForest, UnitIdentity};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
-use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
+use crate::gameplay::objectives::{ScenarioObjectiveSet, ScenarioOutcome};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
-use crate::missions::{MissionDefinition, SelectedMission};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportCadence};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
+use crate::scenarios::{ScenarioDefinition, SelectedScenario};
 use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
 };
@@ -39,10 +39,10 @@ use std::collections::HashMap;
 // ============================================================================
 
 #[derive(Component)]
-pub struct MissionScreenRoot;
+pub struct ScenarioScreenRoot;
 
 #[derive(Component)]
-pub struct MissionEntity;
+pub struct ScenarioScoped;
 
 #[derive(Component)]
 pub struct SelectedUnitInfoPanel;
@@ -114,15 +114,15 @@ struct SpawnSoldierAction {
 }
 
 #[derive(Component, Clone, Copy)]
-struct MissionMenuToggle {
+struct ScenarioMenuToggle {
     id: MenuId,
 }
 
 #[derive(Component)]
-pub struct MissionOutcomeBanner;
+pub struct ScenarioOutcomeBanner;
 
 #[derive(Component)]
-pub struct MissionOutcomeText;
+pub struct ScenarioOutcomeText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -159,7 +159,7 @@ pub struct Menu {
     pub id: MenuId,
 }
 
-/// Possible menus within the mission screen
+/// Possible menus within the scenario screen
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuId {
     Meta,
@@ -171,19 +171,19 @@ pub enum MenuId {
 // PLUGIN
 // ============================================================================
 
-pub struct MissionScreenPlugin;
+pub struct ScenarioScreenPlugin;
 
-impl Plugin for MissionScreenPlugin {
+impl Plugin for ScenarioScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
             .init_resource::<UnitDebugPanelState>()
             .add_systems(
-                OnEnter(crate::GameState::MissionScreen),
-                (setup_mission_ui, setup_selected_mission),
+                OnEnter(crate::GameState::ScenarioScreen),
+                (setup_scenario_ui, setup_selected_scenario),
             )
             .add_systems(
-                OnExit(crate::GameState::MissionScreen),
-                cleanup_mission_scene,
+                OnExit(crate::GameState::ScenarioScreen),
+                cleanup_scenario_scene,
             )
             .add_systems(
                 Update,
@@ -193,9 +193,9 @@ impl Plugin for MissionScreenPlugin {
                     update_simulation_clock_text,
                     update_simulation_perf_text,
                     update_simulation_perf_breakdown,
-                    update_mission_outcome_banner,
+                    update_scenario_outcome_banner,
                 )
-                    .run_if(in_state(crate::GameState::MissionScreen)),
+                    .run_if(in_state(crate::GameState::ScenarioScreen)),
             );
     }
 }
@@ -231,10 +231,10 @@ fn handle_unit_debug_section_toggle(
     }
 }
 
-fn handle_mission_menu_toggle_change(
+fn handle_scenario_menu_toggle_change(
     value_change: On<ValueChange<bool>>,
     mut menu_state: ResMut<MenuState>,
-    toggles: Query<&MissionMenuToggle>,
+    toggles: Query<&ScenarioMenuToggle>,
 ) {
     if let Ok(toggle) = toggles.get(value_change.source) {
         menu_state.set(toggle.id, value_change.value);
@@ -562,10 +562,10 @@ pub fn update_simulation_clock_text(
     **text = format!("T+{minutes:02}:{seconds:02}  tick {}{paused}", clock.tick);
 }
 
-pub fn update_mission_outcome_banner(
-    outcome: Res<MissionOutcome>,
-    mut banner_query: Query<&mut Node, With<MissionOutcomeBanner>>,
-    mut text_query: Query<(&mut Text, &mut TextColor), With<MissionOutcomeText>>,
+pub fn update_scenario_outcome_banner(
+    outcome: Res<ScenarioOutcome>,
+    mut banner_query: Query<&mut Node, With<ScenarioOutcomeBanner>>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<ScenarioOutcomeText>>,
 ) {
     if !outcome.is_changed() {
         return;
@@ -579,15 +579,15 @@ pub fn update_mission_outcome_banner(
     };
 
     match *outcome {
-        MissionOutcome::InProgress => {
+        ScenarioOutcome::InProgress => {
             banner_node.display = Display::None;
         }
-        MissionOutcome::Victory => {
+        ScenarioOutcome::Victory => {
             banner_node.display = Display::Flex;
             **text = "VICTORY".to_string();
             *text_color = TextColor(Color::srgb(0.45, 1.0, 0.45));
         }
-        MissionOutcome::Defeat => {
+        ScenarioOutcome::Defeat => {
             banner_node.display = Display::Flex;
             **text = "DEFEAT".to_string();
             *text_color = TextColor(Color::srgb(1.0, 0.25, 0.2));
@@ -690,12 +690,12 @@ pub fn update_simulation_perf_breakdown(
     **text = lines;
 }
 
-/// Setup the entire mission UI hierarchy using flexbox
-pub fn setup_mission_ui(mut commands: Commands) {
+/// Setup the entire scenario UI hierarchy using flexbox
+pub fn setup_scenario_ui(mut commands: Commands) {
     commands
         .spawn((
-            MissionScreenRoot,
-            MissionOutcomeBanner,
+            ScenarioScreenRoot,
+            ScenarioOutcomeBanner,
             Node {
                 display: Display::None,
                 position_type: PositionType::Absolute,
@@ -710,7 +710,7 @@ pub fn setup_mission_ui(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                MissionOutcomeText,
+                ScenarioOutcomeText,
                 Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(72.0),
@@ -722,7 +722,7 @@ pub fn setup_mission_ui(mut commands: Commands) {
 
     commands
         .spawn((
-            MissionScreenRoot,
+            ScenarioScreenRoot,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(10.0),
@@ -787,7 +787,7 @@ pub fn setup_mission_ui(mut commands: Commands) {
     // Root flex container (fills screen, horizontal layout)
     commands
         .spawn((
-            MissionScreenRoot,
+            ScenarioScreenRoot,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -821,8 +821,8 @@ pub fn setup_mission_ui(mut commands: Commands) {
                             ..default()
                         },
                         (
-                            MissionMenuToggle { id: MenuId::Unit },
-                            observe(handle_mission_menu_toggle_change),
+                            ScenarioMenuToggle { id: MenuId::Unit },
+                            observe(handle_scenario_menu_toggle_change),
                         ),
                     );
 
@@ -836,10 +836,10 @@ pub fn setup_mission_ui(mut commands: Commands) {
                             ..default()
                         },
                         (
-                            MissionMenuToggle {
+                            ScenarioMenuToggle {
                                 id: MenuId::Settings,
                             },
-                            observe(handle_mission_menu_toggle_change),
+                            observe(handle_scenario_menu_toggle_change),
                         ),
                     );
                 });
@@ -1068,49 +1068,49 @@ pub fn setup_mission_ui(mut commands: Commands) {
         });
 }
 
-/// Cleanup mission scene on exit
-pub fn cleanup_mission_scene(
+/// Cleanup scenario scene on exit
+pub fn cleanup_scenario_scene(
     mut commands: Commands,
-    ui_roots: Query<Entity, With<MissionScreenRoot>>,
-    mission_entities: Query<Entity, With<MissionEntity>>,
+    ui_roots: Query<Entity, With<ScenarioScreenRoot>>,
+    scenario_entities: Query<Entity, With<ScenarioScoped>>,
 ) {
     for entity in &ui_roots {
         commands.entity(entity).despawn();
     }
 
-    for entity in &mission_entities {
+    for entity in &scenario_entities {
         commands.entity(entity).despawn();
     }
 }
 
-pub fn setup_selected_mission(mut commands: Commands, selected: Option<Res<SelectedMission>>) {
+pub fn setup_selected_scenario(mut commands: Commands, selected: Option<Res<SelectedScenario>>) {
     let Some(selected) = selected else {
-        panic!("MISSION DOESNT EXIST: MissionScreen entered without SelectedMission");
+        panic!("SCENARIO DOES NOT EXIST: ScenarioScreen entered without SelectedScenario");
     };
 
-    spawn_mission(&mut commands, selected.mission);
+    spawn_scenario(&mut commands, selected.scenario);
 }
 
-pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
+pub fn spawn_scenario(commands: &mut Commands, scenario: &ScenarioDefinition) {
     info!(
-        "Spawning mission: {} ({}) on map: {}",
-        mission.name, mission.id, mission.map.name
+        "Spawning scenario: {} ({}) on map: {}",
+        scenario.name, scenario.id, scenario.map.name
     );
-    commands.insert_resource(BattlefieldMap::from_definition(mission.map));
+    commands.insert_resource(BattlefieldMap::from_definition(scenario.map));
     commands.insert_resource(SimulationClock::default());
     commands.insert_resource(PlayerTacticalKnowledge::default());
     commands.insert_resource(PacketIdAllocator::default());
     commands.insert_resource(SelectedUnit::default());
-    commands.insert_resource(MissionObjectiveSet::from_slices(
-        mission.victory_conditions,
-        mission.defeat_conditions,
+    commands.insert_resource(ScenarioObjectiveSet::from_slices(
+        scenario.victory_conditions,
+        scenario.defeat_conditions,
     ));
-    commands.insert_resource(MissionOutcome::InProgress);
+    commands.insert_resource(ScenarioOutcome::InProgress);
 
     let mut entities_by_unit_id = HashMap::new();
     let mut side_by_entity = HashMap::new();
 
-    for unit in mission.units {
+    for unit in scenario.units {
         let entity = spawn_soldier_at(
             commands,
             unit.rank,
@@ -1130,7 +1130,7 @@ pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     }
 
     commands.insert_resource(CommandForest::from_assignments(
-        mission.command_assignments,
+        scenario.command_assignments,
         &entities_by_unit_id,
         |entity| side_by_entity.get(&entity).copied(),
     ));
@@ -1166,7 +1166,7 @@ pub fn spawn_soldier_at(
 ) -> Entity {
     let entity = commands
         .spawn((
-            MissionEntity,
+            ScenarioScoped,
             Soldier { rank, role },
             Alive,
             Allegiance { side },

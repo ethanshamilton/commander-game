@@ -26,7 +26,7 @@ impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectedUnit>().add_systems(
             Update,
-            (select_unit, issue_contextual_order).run_if(in_state(GameState::MissionScreen)),
+            (select_unit, issue_contextual_order).run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

@@ -15,7 +15,7 @@ impl Plugin for CombatRenderingPlugin {
             (spawn_tracers_from_resolved_shots, draw_and_cleanup_tracers)
                 .chain()
                 .in_set(RenderingSet::Overlays)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

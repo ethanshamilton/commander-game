@@ -18,7 +18,7 @@ impl Plugin for MainMenuScreenPlugin {
 struct MainMenuRoot;
 
 #[derive(Component)]
-struct GoToMissionSelectAction;
+struct GoToScenarioSelectAction;
 
 #[derive(Component)]
 struct GoToSettingsAction;
@@ -50,12 +50,12 @@ fn setup_main_menu(mut commands: Commands) {
             spawn_text_button(
                 parent,
                 TextButtonConfig {
-                    label: "Tutorial Missions".to_string(),
+                    label: "Tutorial Scenarios".to_string(),
                     width: Val::Px(260.0),
                     height: Val::Px(58.0),
                     ..default()
                 },
-                (GoToMissionSelectAction, observe(go_to_mission_select)),
+                (GoToScenarioSelectAction, observe(go_to_scenario_select)),
             );
 
             spawn_text_button(
@@ -71,13 +71,13 @@ fn setup_main_menu(mut commands: Commands) {
         });
 }
 
-fn go_to_mission_select(
+fn go_to_scenario_select(
     activate: On<Activate>,
     mut next_state: ResMut<NextState<GameState>>,
-    actions: Query<&GoToMissionSelectAction>,
+    actions: Query<&GoToScenarioSelectAction>,
 ) {
     if actions.get(activate.entity).is_ok() {
-        next_state.set(GameState::MissionSelect);
+        next_state.set(GameState::ScenarioSelect);
     }
 }
 

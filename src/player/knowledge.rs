@@ -21,7 +21,7 @@ impl Plugin for PlayerKnowledgePlugin {
             (consume_player_report_packets, author_report_packets)
                 .chain()
                 .in_set(SimulationSet::Reports)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

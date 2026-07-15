@@ -1,33 +1,33 @@
-#![doc = include_str!("../../docs/screens/mission_brief.md")]
+#![doc = include_str!("../../docs/screens/scenario_brief.md")]
 
 use crate::GameState;
-use crate::missions::SelectedMission;
+use crate::scenarios::SelectedScenario;
 use crate::ui::widgets::{TextButtonConfig, spawn_text_button};
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, observe};
 
-pub struct MissionBriefScreenPlugin;
+pub struct ScenarioBriefScreenPlugin;
 
-impl Plugin for MissionBriefScreenPlugin {
+impl Plugin for ScenarioBriefScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::MissionBrief), setup_mission_brief)
-            .add_systems(OnExit(GameState::MissionBrief), cleanup_mission_brief);
+        app.add_systems(OnEnter(GameState::ScenarioBrief), setup_scenario_brief)
+            .add_systems(OnExit(GameState::ScenarioBrief), cleanup_scenario_brief);
     }
 }
 
 #[derive(Component)]
-struct MissionBriefRoot;
+struct ScenarioBriefRoot;
 
 #[derive(Component)]
-struct StartMissionAction;
+struct StartScenarioAction;
 
 #[derive(Component)]
-struct BackToMissionSelectAction;
+struct BackToScenarioSelectAction;
 
-fn setup_mission_brief(mut commands: Commands, selected: Option<Res<SelectedMission>>) {
+fn setup_scenario_brief(mut commands: Commands, selected: Option<Res<SelectedScenario>>) {
     commands
         .spawn((
-            MissionBriefRoot,
+            ScenarioBriefRoot,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -42,7 +42,7 @@ fn setup_mission_brief(mut commands: Commands, selected: Option<Res<SelectedMiss
         .with_children(|parent| {
             let Some(selected) = selected else {
                 parent.spawn((
-                    Text::new("MISSION DOESNT EXIST"),
+                    Text::new("SCENARIO DOES NOT EXIST"),
                     TextFont {
                         font_size: FontSize::Px(48.0),
                         ..default()
@@ -55,7 +55,7 @@ fn setup_mission_brief(mut commands: Commands, selected: Option<Res<SelectedMiss
             };
 
             parent.spawn((
-                Text::new(selected.mission.name),
+                Text::new(selected.scenario.name),
                 TextFont {
                     font_size: FontSize::Px(44.0),
                     ..default()
@@ -64,7 +64,7 @@ fn setup_mission_brief(mut commands: Commands, selected: Option<Res<SelectedMiss
             ));
 
             parent.spawn((
-                Text::new(selected.mission.briefing),
+                Text::new(selected.scenario.briefing),
                 TextFont {
                     font_size: FontSize::Px(22.0),
                     ..default()
@@ -87,12 +87,12 @@ fn setup_mission_brief(mut commands: Commands, selected: Option<Res<SelectedMiss
                     spawn_text_button(
                         buttons,
                         TextButtonConfig {
-                            label: "Start Mission".to_string(),
+                            label: "Start Scenario".to_string(),
                             width: Val::Px(220.0),
                             height: Val::Px(56.0),
                             ..default()
                         },
-                        (StartMissionAction, observe(start_mission)),
+                        (StartScenarioAction, observe(start_scenario)),
                     );
                 });
         });
@@ -107,38 +107,38 @@ fn spawn_back_button(parent: &mut ChildSpawnerCommands) {
             height: Val::Px(56.0),
             ..default()
         },
-        (BackToMissionSelectAction, observe(back_to_mission_select)),
+        (BackToScenarioSelectAction, observe(back_to_scenario_select)),
     );
 }
 
-fn start_mission(
+fn start_scenario(
     activate: On<Activate>,
-    selected: Option<Res<SelectedMission>>,
+    selected: Option<Res<SelectedScenario>>,
     mut next_state: ResMut<NextState<GameState>>,
-    actions: Query<&StartMissionAction>,
+    actions: Query<&StartScenarioAction>,
 ) {
     if actions.get(activate.entity).is_err() {
         return;
     }
 
     if selected.is_none() {
-        panic!("MISSION DOESNT EXIST: Start Mission activated without SelectedMission");
+        panic!("SCENARIO DOES NOT EXIST: Start Scenario activated without SelectedScenario");
     }
 
-    next_state.set(GameState::MissionScreen);
+    next_state.set(GameState::ScenarioScreen);
 }
 
-fn back_to_mission_select(
+fn back_to_scenario_select(
     activate: On<Activate>,
     mut next_state: ResMut<NextState<GameState>>,
-    actions: Query<&BackToMissionSelectAction>,
+    actions: Query<&BackToScenarioSelectAction>,
 ) {
     if actions.get(activate.entity).is_ok() {
-        next_state.set(GameState::MissionSelect);
+        next_state.set(GameState::ScenarioSelect);
     }
 }
 
-fn cleanup_mission_brief(mut commands: Commands, roots: Query<Entity, With<MissionBriefRoot>>) {
+fn cleanup_scenario_brief(mut commands: Commands, roots: Query<Entity, With<ScenarioBriefRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn();
     }

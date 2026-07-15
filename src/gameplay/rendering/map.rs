@@ -16,7 +16,7 @@ impl Plugin for MapRenderingPlugin {
             (draw_battlefield_grid, draw_topography)
                 .chain()
                 .in_set(RenderingSet::Map)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

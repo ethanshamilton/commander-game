@@ -39,7 +39,7 @@ impl Plugin for TacticalOverlayRenderingPlugin {
                 draw_enemy_contact_boxes,
             )
                 .in_set(RenderingSet::Overlays)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

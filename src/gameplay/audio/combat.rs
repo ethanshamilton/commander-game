@@ -15,7 +15,7 @@ impl Plugin for CombatAudioPlugin {
             FixedUpdate,
             play_fire_sounds
                 .in_set(SimulationSet::Cleanup)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

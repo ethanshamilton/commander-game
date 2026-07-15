@@ -24,7 +24,7 @@ impl Plugin for PerceptionPlugin {
             FixedUpdate,
             (update_visual_perception, update_auditory_perception)
                 .in_set(SimulationSet::Sensors)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

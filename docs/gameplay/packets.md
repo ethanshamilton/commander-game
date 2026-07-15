@@ -40,5 +40,5 @@ delivery each comms tick. `SeenPackets` is deliberately not pruned with the
 inbox: if an old utterance still matters, a sender should create a new packet
 with a new ID rather than rely on network-level retry.
 
-Packet IDs are mission-runtime state. The allocator is reset when a mission is
-spawned alongside the other mission runtime resources.
+Packet IDs are scenario-runtime state. The allocator is reset when a scenario is
+spawned alongside the other scenario runtime resources.

@@ -11,7 +11,7 @@ impl Plugin for BattlefieldCameraPlugin {
         app.add_systems(
             Update,
             (pan_battlefield_camera, zoom_battlefield_camera)
-                .run_if(in_state(GameState::MissionScreen)),
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }

@@ -6,8 +6,8 @@ mod ai;
 mod gameplay;
 mod intel;
 mod maps;
-mod missions;
 mod player;
+mod scenarios;
 mod screens;
 mod ui;
 
@@ -45,8 +45,8 @@ fn main() {
 pub enum GameState {
     MainMenu,
     #[default]
-    MissionSelect,
-    MissionBrief,
-    MissionScreen,
+    ScenarioSelect,
+    ScenarioBrief,
+    ScenarioScreen,
     Settings,
 }

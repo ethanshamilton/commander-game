@@ -10,20 +10,20 @@ pub struct ObjectivesPlugin;
 
 impl Plugin for ObjectivesPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MissionObjectiveSet>()
-            .init_resource::<MissionOutcome>()
-            .add_message::<MissionEnded>()
+        app.init_resource::<ScenarioObjectiveSet>()
+            .init_resource::<ScenarioOutcome>()
+            .add_message::<ScenarioEnded>()
             .add_systems(
                 FixedUpdate,
-                evaluate_mission_outcome
+                evaluate_scenario_outcome
                     .in_set(SimulationSet::Objectives)
-                    .run_if(in_state(GameState::MissionScreen)),
+                    .run_if(in_state(GameState::ScenarioScreen)),
             );
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MissionCondition {
+pub enum ScenarioCondition {
     /// Victory/defeat condition where every unit not on the player's side is dead.
     AllHostilesEliminated,
     /// Victory/defeat condition where every unit on the player's side is dead.
@@ -31,15 +31,15 @@ pub enum MissionCondition {
 }
 
 #[derive(Resource, Debug, Clone, Default)]
-pub struct MissionObjectiveSet {
-    pub victory_conditions: Vec<MissionCondition>,
-    pub defeat_conditions: Vec<MissionCondition>,
+pub struct ScenarioObjectiveSet {
+    pub victory_conditions: Vec<ScenarioCondition>,
+    pub defeat_conditions: Vec<ScenarioCondition>,
 }
 
-impl MissionObjectiveSet {
+impl ScenarioObjectiveSet {
     pub fn from_slices(
-        victory_conditions: &[MissionCondition],
-        defeat_conditions: &[MissionCondition],
+        victory_conditions: &[ScenarioCondition],
+        defeat_conditions: &[ScenarioCondition],
     ) -> Self {
         Self {
             victory_conditions: victory_conditions.to_vec(),
@@ -49,14 +49,14 @@ impl MissionObjectiveSet {
 }
 
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum MissionOutcome {
+pub enum ScenarioOutcome {
     #[default]
     InProgress,
     Victory,
     Defeat,
 }
 
-impl MissionOutcome {
+impl ScenarioOutcome {
     pub fn is_finished(self) -> bool {
         self != Self::InProgress
     }
@@ -64,8 +64,8 @@ impl MissionOutcome {
 
 #[allow(dead_code)]
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MissionEnded {
-    pub outcome: MissionOutcome,
+pub struct ScenarioEnded {
+    pub outcome: ScenarioOutcome,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -96,13 +96,13 @@ impl SideCounts {
     }
 }
 
-fn evaluate_mission_outcome(
-    objectives: Res<MissionObjectiveSet>,
-    mut outcome: ResMut<MissionOutcome>,
+fn evaluate_scenario_outcome(
+    objectives: Res<ScenarioObjectiveSet>,
+    mut outcome: ResMut<ScenarioOutcome>,
     mut clock: ResMut<SimulationClock>,
     control: Res<PlayerControl>,
     units: Query<(&Allegiance, Option<&Alive>), With<Soldier>>,
-    mut mission_ended: MessageWriter<MissionEnded>,
+    mut scenario_ended: MessageWriter<ScenarioEnded>,
 ) {
     if outcome.is_finished() {
         return;
@@ -111,14 +111,14 @@ fn evaluate_mission_outcome(
     let counts = side_counts(&units, control.side);
     let next = next_outcome(&objectives, counts);
 
-    if next == MissionOutcome::InProgress {
+    if next == ScenarioOutcome::InProgress {
         return;
     }
 
     *outcome = next;
     clock.paused = true;
-    mission_ended.write(MissionEnded { outcome: next });
-    info!("Mission ended: {next:?}");
+    scenario_ended.write(ScenarioEnded { outcome: next });
+    info!("Scenario ended: {next:?}");
 }
 
 fn side_counts(
@@ -134,14 +134,14 @@ fn side_counts(
     counts
 }
 
-fn next_outcome(objectives: &MissionObjectiveSet, counts: SideCounts) -> MissionOutcome {
-    // Avoid vacuous truth while a mission is empty or still being initialized.
+fn next_outcome(objectives: &ScenarioObjectiveSet, counts: SideCounts) -> ScenarioOutcome {
+    // Avoid vacuous truth while a scenario is empty or still being initialized.
     if counts.total_units() == 0 {
-        return MissionOutcome::InProgress;
+        return ScenarioOutcome::InProgress;
     }
 
     if any_condition_met(&objectives.defeat_conditions, counts) {
-        return MissionOutcome::Defeat;
+        return ScenarioOutcome::Defeat;
     }
 
     if !objectives.victory_conditions.is_empty()
@@ -150,24 +150,24 @@ fn next_outcome(objectives: &MissionObjectiveSet, counts: SideCounts) -> Mission
             .iter()
             .all(|condition| condition_met(*condition, counts))
     {
-        return MissionOutcome::Victory;
+        return ScenarioOutcome::Victory;
     }
 
-    MissionOutcome::InProgress
+    ScenarioOutcome::InProgress
 }
 
-fn any_condition_met(conditions: &[MissionCondition], counts: SideCounts) -> bool {
+fn any_condition_met(conditions: &[ScenarioCondition], counts: SideCounts) -> bool {
     conditions
         .iter()
         .any(|condition| condition_met(*condition, counts))
 }
 
-fn condition_met(condition: MissionCondition, counts: SideCounts) -> bool {
+fn condition_met(condition: ScenarioCondition, counts: SideCounts) -> bool {
     match condition {
-        MissionCondition::AllHostilesEliminated => {
+        ScenarioCondition::AllHostilesEliminated => {
             counts.hostile_total > 0 && counts.hostile_alive == 0
         }
-        MissionCondition::AllFriendliesEliminated => {
+        ScenarioCondition::AllFriendliesEliminated => {
             counts.friendly_total > 0 && counts.friendly_alive == 0
         }
     }
@@ -178,10 +178,10 @@ mod tests {
     use super::*;
 
     fn objectives(
-        victory_conditions: Vec<MissionCondition>,
-        defeat_conditions: Vec<MissionCondition>,
-    ) -> MissionObjectiveSet {
-        MissionObjectiveSet {
+        victory_conditions: Vec<ScenarioCondition>,
+        defeat_conditions: Vec<ScenarioCondition>,
+    ) -> ScenarioObjectiveSet {
+        ScenarioObjectiveSet {
             victory_conditions,
             defeat_conditions,
         }
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn all_hostiles_eliminated_requires_hostiles_to_exist_and_be_dead() {
-        let condition = MissionCondition::AllHostilesEliminated;
+        let condition = ScenarioCondition::AllHostilesEliminated;
         assert!(!condition_met(condition, SideCounts::default()));
         assert!(!condition_met(
             condition,
@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn all_friendlies_eliminated_requires_friendlies_to_exist_and_be_dead() {
-        let condition = MissionCondition::AllFriendliesEliminated;
+        let condition = ScenarioCondition::AllFriendliesEliminated;
         assert!(!condition_met(condition, SideCounts::default()));
         assert!(!condition_met(
             condition,
@@ -234,8 +234,8 @@ mod tests {
     #[test]
     fn defeat_takes_precedence_when_victory_and_defeat_are_simultaneously_true() {
         let objectives = objectives(
-            vec![MissionCondition::AllHostilesEliminated],
-            vec![MissionCondition::AllFriendliesEliminated],
+            vec![ScenarioCondition::AllHostilesEliminated],
+            vec![ScenarioCondition::AllFriendliesEliminated],
         );
         let counts = SideCounts {
             friendly_total: 1,
@@ -244,15 +244,15 @@ mod tests {
             hostile_alive: 0,
         };
 
-        assert_eq!(next_outcome(&objectives, counts), MissionOutcome::Defeat);
+        assert_eq!(next_outcome(&objectives, counts), ScenarioOutcome::Defeat);
     }
 
     #[test]
     fn victory_requires_all_victory_conditions() {
         let objectives = objectives(
             vec![
-                MissionCondition::AllHostilesEliminated,
-                MissionCondition::AllFriendliesEliminated,
+                ScenarioCondition::AllHostilesEliminated,
+                ScenarioCondition::AllFriendliesEliminated,
             ],
             vec![],
         );
@@ -265,7 +265,7 @@ mod tests {
 
         assert_eq!(
             next_outcome(&objectives, counts),
-            MissionOutcome::InProgress
+            ScenarioOutcome::InProgress
         );
     }
 
@@ -281,7 +281,7 @@ mod tests {
 
         assert_eq!(
             next_outcome(&objectives, counts),
-            MissionOutcome::InProgress
+            ScenarioOutcome::InProgress
         );
     }
 }

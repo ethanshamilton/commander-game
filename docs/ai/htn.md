@@ -131,7 +131,7 @@ the existing soldier domain):
    `domains: HashMap::from([(DomainId::Soldier, ...), (DomainId::YourNew, ...)])`.
 4. Give spawned units of that archetype `DomainRef(DomainId::YourNew)` instead
    of `DomainRef(DomainId::Soldier)` (see `spawn_soldier_at` in
-   `screens/mission.rs` for the current spawn-time wiring pattern —
+   `screens/scenario.rs` for the current spawn-time wiring pattern —
    `Autonomous` + `DecisionTrace::default()` + `PlannerBelief::default()` +
    `DomainRef`). All soldiers are currently spawned autonomous, including
    player-side units, so direct player orders and HTN orders can be tested

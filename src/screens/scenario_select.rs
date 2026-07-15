@@ -1,35 +1,35 @@
-#![doc = include_str!("../../docs/screens/mission_select.md")]
+#![doc = include_str!("../../docs/screens/scenario_select.md")]
 
 use crate::GameState;
-use crate::missions::{MissionDefinition, SelectedMission, TUTORIAL_MISSIONS};
+use crate::scenarios::{ScenarioDefinition, SelectedScenario, TUTORIAL_SCENARIOS};
 use crate::ui::widgets::{ListRowConfig, TextButtonConfig, spawn_list_row, spawn_text_button};
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, observe};
 
-pub struct MissionSelectScreenPlugin;
+pub struct ScenarioSelectScreenPlugin;
 
-impl Plugin for MissionSelectScreenPlugin {
+impl Plugin for ScenarioSelectScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::MissionSelect), setup_mission_select)
-            .add_systems(OnExit(GameState::MissionSelect), cleanup_mission_select);
+        app.add_systems(OnEnter(GameState::ScenarioSelect), setup_scenario_select)
+            .add_systems(OnExit(GameState::ScenarioSelect), cleanup_scenario_select);
     }
 }
 
 #[derive(Component)]
-struct MissionSelectRoot;
+struct ScenarioSelectRoot;
 
 #[derive(Component, Clone, Copy)]
-struct SelectMissionAction {
-    mission: &'static MissionDefinition,
+struct SelectScenarioAction {
+    scenario: &'static ScenarioDefinition,
 }
 
 #[derive(Component)]
 struct GoToMainMenuAction;
 
-fn setup_mission_select(mut commands: Commands) {
+fn setup_scenario_select(mut commands: Commands) {
     commands
         .spawn((
-            MissionSelectRoot,
+            ScenarioSelectRoot,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -42,7 +42,7 @@ fn setup_mission_select(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("Tutorial Missions"),
+                Text::new("Tutorial Scenarios"),
                 TextFont {
                     font_size: FontSize::Px(46.0),
                     ..default()
@@ -58,14 +58,14 @@ fn setup_mission_select(mut commands: Commands) {
                     ..default()
                 })
                 .with_children(|list| {
-                    for mission in TUTORIAL_MISSIONS {
+                    for scenario in TUTORIAL_SCENARIOS {
                         spawn_list_row(
                             list,
                             ListRowConfig {
-                                label: mission.name.to_string(),
+                                label: scenario.name.to_string(),
                                 ..default()
                             },
-                            (SelectMissionAction { mission }, observe(select_mission)),
+                            (SelectScenarioAction { scenario }, observe(select_scenario)),
                         );
                     }
                 });
@@ -84,20 +84,20 @@ fn setup_mission_select(mut commands: Commands) {
         });
 }
 
-fn select_mission(
+fn select_scenario(
     activate: On<Activate>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
-    actions: Query<&SelectMissionAction>,
+    actions: Query<&SelectScenarioAction>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
     };
 
-    commands.insert_resource(SelectedMission {
-        mission: action.mission,
+    commands.insert_resource(SelectedScenario {
+        scenario: action.scenario,
     });
-    next_state.set(GameState::MissionBrief);
+    next_state.set(GameState::ScenarioBrief);
 }
 
 fn go_to_main_menu(
@@ -110,7 +110,7 @@ fn go_to_main_menu(
     }
 }
 
-fn cleanup_mission_select(mut commands: Commands, roots: Query<Entity, With<MissionSelectRoot>>) {
+fn cleanup_scenario_select(mut commands: Commands, roots: Query<Entity, With<ScenarioSelectRoot>>) {
     for entity in &roots {
         commands.entity(entity).despawn();
     }
