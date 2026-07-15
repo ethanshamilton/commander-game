@@ -17,6 +17,7 @@ use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::missions::MissionIdAllocator;
+use crate::gameplay::missions::{MissionPlan, TacticalMission};
 use crate::gameplay::objectives::{ScenarioObjectiveSet, ScenarioOutcome};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
@@ -24,6 +25,7 @@ use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportCadence};
+use crate::player::mission_placement::{MissionPlacementState, SelectedMission};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::scenarios::{ScenarioDefinition, SelectedScenario};
 use crate::ui::widgets::{
@@ -120,6 +122,23 @@ struct ScenarioMenuToggle {
 }
 
 #[derive(Component)]
+struct BeginHoldLinePlacementAction;
+
+#[derive(Component)]
+pub struct MissionPlacementInstruction;
+
+#[derive(Component)]
+pub struct MissionList;
+
+#[derive(Component, Clone, Copy)]
+struct SelectMissionAction {
+    mission: Entity,
+}
+
+#[derive(Component)]
+struct RenameSelectedMissionAction;
+
+#[derive(Component)]
 pub struct ScenarioOutcomeBanner;
 
 #[derive(Component)]
@@ -140,6 +159,7 @@ impl MenuState {
         let mut states = HashMap::new();
         states.insert(MenuId::Meta, true);
         states.insert(MenuId::Unit, false);
+        states.insert(MenuId::Mission, false);
         states.insert(MenuId::Settings, false);
 
         Self { states }
@@ -165,6 +185,7 @@ pub struct Menu {
 pub enum MenuId {
     Meta,
     Unit,
+    Mission,
     Settings,
 }
 
@@ -195,6 +216,8 @@ impl Plugin for ScenarioScreenPlugin {
                     update_simulation_perf_text,
                     update_simulation_perf_breakdown,
                     update_scenario_outcome_banner,
+                    update_mission_placement_instruction,
+                    update_mission_list,
                 )
                     .run_if(in_state(crate::GameState::ScenarioScreen)),
             );
@@ -232,6 +255,50 @@ fn handle_unit_debug_section_toggle(
     }
 }
 
+fn begin_hold_line_placement(
+    activate: On<Activate>,
+    actions: Query<(), With<BeginHoldLinePlacementAction>>,
+    mut placement: ResMut<MissionPlacementState>,
+) {
+    if actions.get(activate.entity).is_ok() {
+        placement.begin_hold_line();
+    }
+}
+
+fn select_mission(
+    activate: On<Activate>,
+    actions: Query<&SelectMissionAction>,
+    missions: Query<(), (With<TacticalMission>, With<MissionPlan>)>,
+    mut selected: ResMut<SelectedMission>,
+) {
+    let Ok(action) = actions.get(activate.entity) else {
+        return;
+    };
+    if missions.get(action.mission).is_ok() {
+        selected.entity = Some(action.mission);
+    }
+}
+
+fn rename_selected_mission(
+    activate: On<Activate>,
+    actions: Query<(), With<RenameSelectedMissionAction>>,
+    selected: Res<SelectedMission>,
+    mut missions: Query<(&mut MissionPlan, &mut Name), With<TacticalMission>>,
+) {
+    if actions.get(activate.entity).is_err() {
+        return;
+    }
+    let Some(entity) = selected.entity else {
+        return;
+    };
+    let Ok((mut mission, mut name)) = missions.get_mut(entity) else {
+        return;
+    };
+
+    mission.label = format!("{} (renamed)", mission.label);
+    *name = Name::new(mission.label.clone());
+}
+
 fn handle_scenario_menu_toggle_change(
     value_change: On<ValueChange<bool>>,
     mut menu_state: ResMut<MenuState>,
@@ -258,6 +325,77 @@ pub fn update_menu_visibility(
             Visibility::Hidden
         };
     }
+}
+
+fn update_mission_placement_instruction(
+    placement: Res<MissionPlacementState>,
+    mut instructions: Query<(&mut Text, &mut Node), With<MissionPlacementInstruction>>,
+) {
+    if !placement.is_changed() {
+        return;
+    }
+
+    for (mut text, mut node) in &mut instructions {
+        let Some(active) = placement.active.as_ref() else {
+            node.display = Display::None;
+            continue;
+        };
+        **text = active.instruction().to_string();
+        node.display = Display::Flex;
+    }
+}
+
+fn update_mission_list(
+    mut commands: Commands,
+    missions: Query<(Entity, Ref<MissionPlan>), With<TacticalMission>>,
+    selected: Res<SelectedMission>,
+    lists: Query<Entity, With<MissionList>>,
+) {
+    if !selected.is_changed() && !missions.iter().any(|(_, mission)| mission.is_changed()) {
+        return;
+    }
+
+    let Ok(list) = lists.single() else {
+        return;
+    };
+
+    let mut entries: Vec<_> = missions.iter().collect();
+    entries.sort_by_key(|(_, plan)| plan.id);
+    commands.entity(list).despawn_children();
+    commands.entity(list).with_children(|parent| {
+        if entries.is_empty() {
+            parent.spawn((
+                Text::new("No tactical missions"),
+                TextFont {
+                    font_size: FontSize::Px(15.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+            ));
+        }
+
+        for (entity, plan) in entries {
+            let marker = if selected.entity == Some(entity) {
+                "* "
+            } else {
+                ""
+            };
+            spawn_text_button(
+                parent,
+                TextButtonConfig {
+                    label: format!("{marker}{}", plan.label),
+                    width: Val::Px(180.0),
+                    height: Val::Px(34.0),
+                    text_size: 14.0,
+                    ..default()
+                },
+                (
+                    SelectMissionAction { mission: entity },
+                    observe(select_mission),
+                ),
+            );
+        }
+    });
 }
 
 pub fn update_selected_unit_info_panel(
@@ -724,6 +862,32 @@ pub fn setup_scenario_ui(mut commands: Commands) {
     commands
         .spawn((
             ScenarioScreenRoot,
+            MissionPlacementInstruction,
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                top: Val::Px(18.0),
+                left: Val::Percent(50.0),
+                padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.05, 0.02, 0.85)),
+            GlobalZIndex(10),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new("Place line start"),
+                TextFont {
+                    font_size: FontSize::Px(20.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.9, 0.15)),
+            ));
+        });
+
+    commands
+        .spawn((
+            ScenarioScreenRoot,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(10.0),
@@ -830,6 +994,23 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                     spawn_checkbox_toggle(
                         sidebar,
                         ToggleConfig {
+                            label: "M".to_string(),
+                            checked: false,
+                            width: Val::Px(180.0),
+                            height: Val::Px(50.0),
+                            ..default()
+                        },
+                        (
+                            ScenarioMenuToggle {
+                                id: MenuId::Mission,
+                            },
+                            observe(handle_scenario_menu_toggle_change),
+                        ),
+                    );
+
+                    spawn_checkbox_toggle(
+                        sidebar,
+                        ToggleConfig {
                             label: "S".to_string(),
                             checked: false,
                             width: Val::Px(180.0),
@@ -858,6 +1039,70 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                         flex_grow: 1.0,
                         ..default()
                     });
+
+                    main_area
+                        .spawn((
+                            Menu {
+                                id: MenuId::Mission,
+                            },
+                            Node {
+                                width: Val::Percent(100.0),
+                                min_height: Val::Px(100.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::FlexStart,
+                                row_gap: Val::Px(6.0),
+                                padding: UiRect::all(Val::Px(10.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.12, 0.12, 0.08)),
+                        ))
+                        .with_children(|mission_menu| {
+                            spawn_text_button(
+                                mission_menu,
+                                TextButtonConfig {
+                                    label: "Hold Line".to_string(),
+                                    width: Val::Px(180.0),
+                                    height: Val::Px(38.0),
+                                    text_size: 16.0,
+                                    ..default()
+                                },
+                                (
+                                    BeginHoldLinePlacementAction,
+                                    observe(begin_hold_line_placement),
+                                ),
+                            );
+                            spawn_text_button(
+                                mission_menu,
+                                TextButtonConfig {
+                                    label: "Rename selected".to_string(),
+                                    width: Val::Px(180.0),
+                                    height: Val::Px(30.0),
+                                    text_size: 13.0,
+                                    ..default()
+                                },
+                                (
+                                    RenameSelectedMissionAction,
+                                    observe(rename_selected_mission),
+                                ),
+                            );
+                            mission_menu.spawn((
+                                Text::new("Tactical missions"),
+                                TextFont {
+                                    font_size: FontSize::Px(15.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.85, 0.85, 0.75)),
+                            ));
+                            mission_menu.spawn((
+                                MissionList,
+                                Node {
+                                    width: Val::Px(180.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(4.0),
+                                    ..default()
+                                },
+                            ));
+                        });
 
                     // Unit bar at bottom (fixed height, toggleable)
                     main_area

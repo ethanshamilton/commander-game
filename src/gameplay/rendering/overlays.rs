@@ -11,7 +11,8 @@ use crate::ai::perception::{
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::{CommsGraph, VoiceComms};
 use crate::gameplay::map::BattlefieldMap;
-use crate::gameplay::measurements::meters;
+use crate::gameplay::measurements::{BEVY_UNITS_PER_METER, meters};
+use crate::gameplay::missions::{MissionArea, MissionAssignees, MissionPlan, TacticalMission};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::intel::ReportedLifeStatus;
@@ -20,8 +21,12 @@ use crate::player::knowledge::{
     CONTACT_RECENCY_TTL_TICKS, PlayerControlledUnit, PlayerTacticalKnowledge,
     REPORT_RECENCY_TTL_TICKS,
 };
+use crate::player::mission_placement::{
+    HoldLinePlacementPhase, MissionPlacementState, SelectedMission,
+};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
 
 pub struct TacticalOverlayRenderingPlugin;
 
@@ -37,6 +42,8 @@ impl Plugin for TacticalOverlayRenderingPlugin {
                 draw_selected_unit_comms,
                 draw_selected_unit_command_relations,
                 draw_enemy_contact_boxes,
+                draw_mission_placement_overlay,
+                draw_finalized_mission_overlays,
             )
                 .in_set(RenderingSet::Overlays)
                 .run_if(in_state(GameState::ScenarioScreen)),
@@ -53,6 +60,121 @@ const UNIT_OVERLAY_RADIUS: f32 = 7.0;
 const COMMAND_LINE_OFFSET: f32 = 5.0;
 const COMMAND_ARROW_HEAD_LENGTH: f32 = 10.0;
 const COMMAND_ARROW_HEAD_ANGLE: f32 = std::f32::consts::PI / 7.0;
+const MISSION_RALLY_RADIUS_M: f32 = 1.5;
+const MISSION_LABEL_OFFSET_M: f32 = 2.0;
+const IN_PROGRESS_MISSION_COLOR: Color = Color::srgb(1.0, 0.9, 0.1);
+const FINALIZED_MISSION_COLOR: Color = Color::WHITE;
+
+fn draw_mission_placement_overlay(
+    placement: Res<MissionPlacementState>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    mut gizmos: Gizmos,
+) {
+    let Some(placement) = placement.active.as_ref() else {
+        return;
+    };
+    let Some(cursor_m) = cursor_world_meters(&windows, &cameras) else {
+        return;
+    };
+
+    let Some(start_m) = placement.line_start_m else {
+        return;
+    };
+    let start = start_m.map(meters);
+    let cursor = cursor_m.map(meters);
+    gizmos.circle_2d(start, meters(0.7), IN_PROGRESS_MISSION_COLOR);
+    gizmos.line_2d(start, cursor, IN_PROGRESS_MISSION_COLOR);
+
+    if placement.phase == HoldLinePlacementPhase::RallyPoint {
+        let Some(end_m) = placement.line_end_m else {
+            return;
+        };
+        let end = end_m.map(meters);
+        gizmos.line_2d(start, end, IN_PROGRESS_MISSION_COLOR);
+        gizmos.circle_2d(end, meters(0.7), IN_PROGRESS_MISSION_COLOR);
+        gizmos.line_2d(midpoint(start, end), cursor, IN_PROGRESS_MISSION_COLOR);
+        gizmos
+            .circle_2d(
+                cursor,
+                meters(MISSION_RALLY_RADIUS_M),
+                IN_PROGRESS_MISSION_COLOR,
+            )
+            .resolution(20);
+    }
+}
+
+fn draw_finalized_mission_overlays(
+    selected_unit: Res<SelectedUnit>,
+    selected_mission: Res<SelectedMission>,
+    command_forest: Res<CommandForest>,
+    missions: Query<(Entity, &MissionPlan, &MissionAssignees), With<TacticalMission>>,
+    mut gizmos: Gizmos,
+) {
+    // Selecting a mission in the menu is an explicit plan-preview mode. Map
+    // unit selection clears it; then only missions assigned to the selected
+    // unit's squad leader are visible.
+    let selected_leader = selected_unit
+        .entity
+        .map(|entity| command_forest.superior_of(entity).unwrap_or(entity));
+
+    for (entity, mission, assignees) in &missions {
+        let explicit_preview = selected_mission.entity == Some(entity);
+        let assigned_to_selected_squad =
+            selected_leader.is_some_and(|leader| assignees.assignees.contains(&leader));
+        if !explicit_preview && !assigned_to_selected_squad {
+            continue;
+        }
+
+        let MissionArea::Line { from_m, to_m } = mission.area else {
+            continue;
+        };
+
+        let from = from_m.map(meters);
+        let to = to_m.map(meters);
+        let color = FINALIZED_MISSION_COLOR;
+        gizmos.line_2d(from, to, color);
+        gizmos.circle_2d(from, meters(0.55), color).resolution(16);
+        gizmos.circle_2d(to, meters(0.55), color).resolution(16);
+
+        let rally = mission.rally_point_m.map(meters);
+        gizmos
+            .circle_2d(rally, meters(MISSION_RALLY_RADIUS_M), color)
+            .resolution(24);
+        gizmos.line_2d(midpoint(from, to), rally, color);
+        let label = if selected_mission.entity == Some(entity) {
+            format!("> {}", mission.label)
+        } else {
+            mission.label.clone()
+        };
+        gizmos.text_2d(
+            Isometry2d::from_translation(
+                midpoint(from, to) + Vec2::Y * meters(MISSION_LABEL_OFFSET_M),
+            ),
+            &label,
+            16.0,
+            Vec2::ZERO,
+            color,
+        );
+    }
+}
+
+fn cursor_world_meters(
+    windows: &Query<&Window, With<PrimaryWindow>>,
+    cameras: &Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+) -> Option<Vec2> {
+    let window = windows.single().ok()?;
+    let cursor = window.cursor_position()?;
+    let (camera, transform) = cameras.single().ok()?;
+    camera
+        .viewport_to_world_2d(transform, cursor)
+        .ok()
+        .map(|position| position / BEVY_UNITS_PER_METER)
+}
+
+fn midpoint(a: Vec2, b: Vec2) -> Vec2 {
+    (a + b) / 2.0
+}
 
 fn draw_selected_unit_sensor_cone(
     selected: Res<SelectedUnit>,

@@ -106,6 +106,15 @@ pub enum MissionKind {
 }
 
 impl MissionKind {
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::HoldLine => "Hold Line",
+            Self::SecurePerimeter => "Secure Perimeter",
+            Self::ScoutArea => "Scout Area",
+            Self::ClearArea => "Clear Area",
+        }
+    }
+
     pub fn accepts_area(self, area: &MissionArea) -> bool {
         matches!(
             (self, area),

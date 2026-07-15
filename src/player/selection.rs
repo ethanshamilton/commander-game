@@ -12,6 +12,7 @@ use crate::gameplay::packets::{
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
+use crate::player::mission_placement::{MissionPlacementState, PlayerInputSet, SelectedMission};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -26,7 +27,9 @@ impl Plugin for SelectionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SelectedUnit>().add_systems(
             Update,
-            (select_unit, issue_contextual_order).run_if(in_state(GameState::ScenarioScreen)),
+            (select_unit, issue_contextual_order)
+                .in_set(PlayerInputSet::Selection)
+                .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
 }
@@ -41,9 +44,11 @@ fn select_unit(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     knowledge: Res<PlayerTacticalKnowledge>,
+    placement: Res<MissionPlacementState>,
     mut selected: ResMut<SelectedUnit>,
+    mut selected_mission: ResMut<SelectedMission>,
 ) {
-    if !mouse_buttons.just_pressed(MouseButton::Left) {
+    if !mouse_buttons.just_pressed(MouseButton::Left) || placement.is_active() {
         return;
     }
 
@@ -72,7 +77,7 @@ fn select_unit(
     };
 
     let selection_radius = meters(SELECTION_RADIUS_M);
-    selected.entity = knowledge
+    let clicked_unit = knowledge
         .units
         .iter()
         .filter_map(|unit| {
@@ -84,6 +89,14 @@ fn select_unit(
         })
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity);
+
+    // Unit and mission selections are distinct inspection modes. An actual
+    // map-unit selection exits mission-preview mode; clicks that do not select
+    // a unit (including UI clicks that leak through picking) must not erase it.
+    if clicked_unit.is_some() {
+        selected_mission.entity = None;
+    }
+    selected.entity = clicked_unit;
 }
 
 fn issue_contextual_order(
@@ -92,6 +105,7 @@ fn issue_contextual_order(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     selected: Res<SelectedUnit>,
+    placement: Res<MissionPlacementState>,
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
@@ -103,7 +117,7 @@ fn issue_contextual_order(
         (With<PlayerControlledUnit>, With<Alive>),
     >,
 ) {
-    if !mouse_buttons.just_pressed(MouseButton::Right) {
+    if !mouse_buttons.just_pressed(MouseButton::Right) || placement.is_active() {
         return;
     }
 
