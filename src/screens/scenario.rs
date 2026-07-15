@@ -16,6 +16,7 @@ use crate::gameplay::command::{CommandForest, UnitIdentity};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
+use crate::gameplay::missions::MissionIdAllocator;
 use crate::gameplay::objectives::{ScenarioObjectiveSet, ScenarioOutcome};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
@@ -1073,6 +1074,7 @@ pub fn cleanup_scenario_scene(
     mut commands: Commands,
     ui_roots: Query<Entity, With<ScenarioScreenRoot>>,
     scenario_entities: Query<Entity, With<ScenarioScoped>>,
+    mut mission_ids: ResMut<MissionIdAllocator>,
 ) {
     for entity in &ui_roots {
         commands.entity(entity).despawn();
@@ -1081,6 +1083,8 @@ pub fn cleanup_scenario_scene(
     for entity in &scenario_entities {
         commands.entity(entity).despawn();
     }
+
+    mission_ids.reset();
 }
 
 pub fn setup_selected_scenario(mut commands: Commands, selected: Option<Res<SelectedScenario>>) {

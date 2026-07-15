@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod lifecycle;
 pub mod map;
 pub mod measurements;
+pub mod missions;
 pub mod objectives;
 pub mod orders;
 pub mod packets;
@@ -25,6 +26,7 @@ use comms::CommsPlugin;
 use debug_powers::DebugPowersPlugin;
 use diagnostics::GameplayDiagnosticsPlugin;
 use lifecycle::UnitLifecyclePlugin;
+use missions::MissionsPlugin;
 use objectives::ObjectivesPlugin;
 use packets::PacketsPlugin;
 use rendering::GameplayRenderingPlugin;
@@ -37,6 +39,7 @@ impl PluginGroup for GameplayPlugins {
         PluginGroupBuilder::start::<Self>()
             .add(SimulationPlugin)
             .add(UnitLifecyclePlugin)
+            .add(MissionsPlugin)
             .add(DebugPowersPlugin)
             .add(CommandPlugin)
             .add(CommsPlugin)
