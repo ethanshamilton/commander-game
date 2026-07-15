@@ -80,9 +80,9 @@ impl MissionPlacement {
 
     pub fn instruction(&self) -> &'static str {
         match self.phase {
-            HoldLinePlacementPhase::LineStart => "Place line start",
-            HoldLinePlacementPhase::LineEnd => "Place line end",
-            HoldLinePlacementPhase::RallyPoint => "Place rally point",
+            HoldLinePlacementPhase::LineStart => "Create Line Start",
+            HoldLinePlacementPhase::LineEnd => "Create Line End",
+            HoldLinePlacementPhase::RallyPoint => "Create Rally Point",
         }
     }
 }
@@ -97,7 +97,12 @@ pub enum HoldLinePlacementPhase {
 /// Tactical mission selected for future assignment and highlighted in overlays.
 #[derive(Resource, Debug, Default, Clone, Copy)]
 pub struct SelectedMission {
+    /// The tactical mission currently chosen for actions such as assignment.
     pub entity: Option<Entity>,
+    /// True only while the mission list explicitly previews this mission.
+    pub preview: bool,
+    /// Selecting a mission enables assignment to the next valid map unit click.
+    pub assignment_mode: bool,
 }
 
 /// Orders player-visible labels independently of scenario-local mission IDs.
@@ -200,6 +205,8 @@ fn place_hold_line_points(
                 ))
                 .id();
             selected.entity = Some(entity);
+            selected.preview = true;
+            selected.assignment_mode = true;
             placement.cancel();
         }
     }
@@ -233,6 +240,8 @@ fn refresh_selected_mission(
         .is_some_and(|entity| missions.get(entity).is_err())
     {
         selected.entity = None;
+        selected.preview = false;
+        selected.assignment_mode = false;
     }
 }
 
@@ -243,6 +252,8 @@ fn reset_mission_ui_state(
 ) {
     placement.cancel();
     selected.entity = None;
+    selected.preview = false;
+    selected.assignment_mode = false;
     labels.reset();
 }
 
@@ -275,15 +286,15 @@ mod tests {
     #[test]
     fn hold_line_placement_progresses_through_the_expected_instructions() {
         let mut placement = MissionPlacement::hold_line();
-        assert_eq!(placement.instruction(), "Place line start");
+        assert_eq!(placement.instruction(), "Create Line Start");
 
         placement.line_start_m = Some(Vec2::ZERO);
         placement.phase = HoldLinePlacementPhase::LineEnd;
-        assert_eq!(placement.instruction(), "Place line end");
+        assert_eq!(placement.instruction(), "Create Line End");
 
         placement.line_end_m = Some(Vec2::X);
         placement.phase = HoldLinePlacementPhase::RallyPoint;
-        assert_eq!(placement.instruction(), "Place rally point");
+        assert_eq!(placement.instruction(), "Create Rally Point");
     }
 
     #[test]
@@ -308,12 +319,17 @@ mod tests {
         };
         let mut selected = SelectedMission {
             entity: Some(Entity::PLACEHOLDER),
+            preview: true,
+            assignment_mode: true,
         };
 
         placement.cancel();
         selected.entity = None;
+        selected.preview = false;
+        selected.assignment_mode = false;
 
         assert!(!placement.is_active());
         assert_eq!(selected.entity, None);
+        assert!(!selected.preview);
     }
 }

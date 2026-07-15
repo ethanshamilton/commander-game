@@ -119,7 +119,7 @@ fn draw_finalized_mission_overlays(
         .map(|entity| command_forest.superior_of(entity).unwrap_or(entity));
 
     for (entity, mission, assignees) in &missions {
-        let explicit_preview = selected_mission.entity == Some(entity);
+        let explicit_preview = selected_mission.preview && selected_mission.entity == Some(entity);
         let assigned_to_selected_squad =
             selected_leader.is_some_and(|leader| assignees.assignees.contains(&leader));
         if !explicit_preview && !assigned_to_selected_squad {

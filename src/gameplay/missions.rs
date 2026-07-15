@@ -1,6 +1,10 @@
 #![doc = include_str!("../../docs/gameplay/missions.md")]
 
 use crate::GameState;
+use crate::actors::units::{Alive, Soldier};
+use crate::gameplay::command::CommandForest;
+use crate::gameplay::packets::{Address, Outbox, PacketIdAllocator, PacketPayload, SeenPackets};
+use crate::gameplay::simulation::SimulationClock;
 use bevy::prelude::*;
 
 /// Tactical missions are persistent intent-bearing plans created during a
@@ -10,10 +14,16 @@ pub struct MissionsPlugin;
 
 impl Plugin for MissionsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MissionIdAllocator>().add_systems(
-            OnEnter(GameState::ScenarioScreen),
-            reset_mission_id_allocator,
-        );
+        app.init_resource::<MissionIdAllocator>()
+            .add_message::<MissionAssignmentRequested>()
+            .add_systems(
+                OnEnter(GameState::ScenarioScreen),
+                reset_mission_id_allocator,
+            )
+            .add_systems(
+                Update,
+                apply_mission_assignment_requests.run_if(in_state(GameState::ScenarioScreen)),
+            );
     }
 }
 
@@ -227,6 +237,103 @@ pub struct AssignedMission {
     pub received_tick: u64,
 }
 
+/// Packet-safe intent assignment sent from a commander to a mission recipient.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MissionAssignmentMessage {
+    pub mission: MissionSnapshot,
+    pub issued_tick: u64,
+}
+
+/// Requests a mission assignment from any UI or future AI commander. The
+/// consumer validates authority and then either installs it locally or sends it
+/// through the physical comms substrate.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct MissionAssignmentRequested {
+    pub mission: Entity,
+    pub issuer: Entity,
+    pub assignee: Entity,
+}
+
+fn apply_mission_assignment_requests(
+    mut commands: Commands,
+    mut requests: MessageReader<MissionAssignmentRequested>,
+    clock: Res<SimulationClock>,
+    command_forest: Res<CommandForest>,
+    mut packet_ids: ResMut<PacketIdAllocator>,
+    mut missions: Query<(&MissionPlan, &mut MissionAssignees), With<TacticalMission>>,
+    soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    mut transmitters: Query<(&mut Outbox, &mut SeenPackets), (With<Soldier>, With<Alive>)>,
+    assignments: Query<&AssignedMission>,
+) {
+    for request in requests.read().copied() {
+        let Ok((plan, mut assignees)) = missions.get_mut(request.mission) else {
+            warn!(?request, "mission assignment rejected: unknown mission");
+            continue;
+        };
+        if plan.validate().is_err()
+            || soldiers.get(request.issuer).is_err()
+            || soldiers.get(request.assignee).is_err()
+            || !command_forest.can_command(request.issuer, request.assignee)
+        {
+            warn!(
+                ?request,
+                "mission assignment rejected: invalid mission, unit, or authority"
+            );
+            continue;
+        }
+        if command_forest.subordinates_of(request.assignee).is_empty() {
+            warn!(
+                ?request,
+                "mission assignment rejected: assignee is not a squad leader"
+            );
+            continue;
+        }
+        if assignees.assignees.contains(&request.assignee) {
+            continue;
+        }
+
+        let message = MissionAssignmentMessage {
+            mission: plan.snapshot(),
+            issued_tick: clock.tick,
+        };
+        if request.issuer == request.assignee {
+            if should_install_assignment(assignments.get(request.assignee).ok(), &message) {
+                commands.entity(request.assignee).insert(AssignedMission {
+                    mission: message.mission,
+                    assigned_by: request.issuer,
+                    issued_tick: message.issued_tick,
+                    received_tick: clock.tick,
+                });
+            }
+        } else {
+            let Ok((mut outbox, mut seen)) = transmitters.get_mut(request.issuer) else {
+                warn!(
+                    ?request,
+                    "mission assignment rejected: issuer cannot transmit"
+                );
+                continue;
+            };
+            outbox.send(
+                &mut seen,
+                &mut packet_ids,
+                request.issuer,
+                Address::Direct(request.assignee),
+                clock.tick,
+                PacketPayload::MissionAssignment(message),
+            );
+        }
+        assignees.assignees.push(request.assignee);
+    }
+}
+
+/// True if an incoming assignment is newer than the one already installed.
+pub fn should_install_assignment(
+    current: Option<&AssignedMission>,
+    incoming: &MissionAssignmentMessage,
+) -> bool {
+    current.is_none_or(|current| incoming.issued_tick > current.issued_tick)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MissionValidationError {
     EmptyLabel,
@@ -412,6 +519,31 @@ mod tests {
     }
 
     #[test]
+    fn newer_assignment_supersedes_but_equal_or_older_assignments_do_not() {
+        let mission = hold_line().snapshot();
+        let incoming = MissionAssignmentMessage {
+            mission: mission.clone(),
+            issued_tick: 11,
+        };
+        let current = AssignedMission {
+            mission,
+            assigned_by: Entity::PLACEHOLDER,
+            issued_tick: 10,
+            received_tick: 10,
+        };
+
+        assert!(should_install_assignment(None, &incoming));
+        assert!(should_install_assignment(Some(&current), &incoming));
+        assert!(!should_install_assignment(
+            Some(&current),
+            &MissionAssignmentMessage {
+                mission: current.mission.clone(),
+                issued_tick: 10,
+            }
+        ));
+    }
+
+    #[test]
     fn allocator_is_monotonic_and_resettable() {
         let mut allocator = MissionIdAllocator::default();
         assert_eq!(allocator.allocate(), MissionId(0));
@@ -425,6 +557,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .init_state::<GameState>()
+            .init_resource::<CommandForest>()
+            .init_resource::<PacketIdAllocator>()
+            .init_resource::<SimulationClock>()
             .add_plugins(MissionsPlugin);
 
         {

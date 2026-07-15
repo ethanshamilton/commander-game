@@ -5,6 +5,7 @@ use crate::actors::units::Alive;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::measurements::{meters, to_meters};
+use crate::gameplay::missions::MissionAssignmentRequested;
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::packets::{
     Address, OrderCommand, Outbox, PacketIdAllocator, PacketPayload, SeenPackets,
@@ -47,6 +48,8 @@ fn select_unit(
     placement: Res<MissionPlacementState>,
     mut selected: ResMut<SelectedUnit>,
     mut selected_mission: ResMut<SelectedMission>,
+    controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
+    mut assignments: MessageWriter<MissionAssignmentRequested>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Left) || placement.is_active() {
         return;
@@ -90,11 +93,20 @@ fn select_unit(
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity);
 
-    // Unit and mission selections are distinct inspection modes. An actual
-    // map-unit selection exits mission-preview mode; clicks that do not select
-    // a unit (including UI clicks that leak through picking) must not erase it.
-    if clicked_unit.is_some() {
-        selected_mission.entity = None;
+    // An actual unit selection exits visual preview. When the mission menu put
+    // us in assignment mode, that same click is the assignment target.
+    if let Some(assignee) = clicked_unit {
+        selected_mission.preview = false;
+        if selected_mission.assignment_mode {
+            if let (Some(mission), Ok(issuer)) = (selected_mission.entity, controlled.single()) {
+                assignments.write(MissionAssignmentRequested {
+                    mission,
+                    issuer,
+                    assignee,
+                });
+            }
+            selected_mission.assignment_mode = false;
+        }
     }
     selected.entity = clicked_unit;
 }

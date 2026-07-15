@@ -6,6 +6,7 @@ use crate::ai::perception::ContactType;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::{CommsGraph, update_comms_graph};
+use crate::gameplay::missions::{AssignedMission, MissionAssignmentMessage};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
 use crate::intel::ReportedLifeStatus;
@@ -26,6 +27,7 @@ impl Plugin for PacketsPlugin {
                 deliver_packets,
                 relay_packets,
                 apply_order_commands,
+                apply_mission_assignments,
             )
                 .chain()
                 .in_set(SimulationSet::Comms)
@@ -83,6 +85,7 @@ pub enum PacketPayload {
     ContactReport(ContactClaim),
     StatusReport(StatusClaim),
     OrderCommand(OrderCommand),
+    MissionAssignment(MissionAssignmentMessage),
 }
 
 /// Player-authored micro-order carried through the packet substrate.
@@ -302,10 +305,57 @@ fn relay_inbox_for_entity(entity: Entity, inbox: &mut Inbox, outbox: &mut Outbox
 
 /// Consume order-command packets addressed to this unit.
 ///
+/// Consume mission assignment packets addressed to this unit. Assignments are
+/// HTN inputs; this system never writes a concrete order lane.
+fn apply_mission_assignments(
+    mut commands: Commands,
+    clock: Res<SimulationClock>,
+    command_forest: Res<CommandForest>,
+    mut units: Query<(Entity, &mut Inbox, Option<&AssignedMission>), (With<Soldier>, With<Alive>)>,
+) {
+    for (entity, mut inbox, current) in &mut units {
+        let mut retained = Vec::with_capacity(inbox.packets.len());
+        let mut newest_issued_tick = current.map(|assignment| assignment.issued_tick);
+        for entry in inbox.packets.drain(..) {
+            let is_assignment_for_me = matches!(entry.packet.address, Address::Direct(target) if target == entity)
+                && matches!(&entry.packet.payload, PacketPayload::MissionAssignment(_));
+            if !is_assignment_for_me {
+                retained.push(entry);
+                continue;
+            }
+
+            let PacketPayload::MissionAssignment(message) = entry.packet.payload else {
+                unreachable!("payload was checked above");
+            };
+            let valid = command_forest.can_command(entry.packet.origin, entity)
+                && message.mission.validate().is_ok()
+                && message
+                    .mission
+                    .expires_at
+                    .is_none_or(|expiry| expiry > clock.tick)
+                && newest_issued_tick.is_none_or(|current| message.issued_tick > current);
+            if !valid {
+                continue;
+            }
+
+            newest_issued_tick = Some(message.issued_tick);
+            commands.entity(entity).insert(AssignedMission {
+                mission: message.mission,
+                assigned_by: entry.packet.origin,
+                issued_tick: message.issued_tick,
+                received_tick: clock.tick,
+            });
+        }
+        inbox.packets = retained;
+    }
+}
+
+/// Consume order-command packets addressed to this unit.
+///
 /// For now these represent only the player micro path: the packet origin must
 /// be the player-controlled command node and must have authority through the
 /// command forest. Successful commands install player-sourced order provenance;
-/// delegated AI directives should later use a separate goal/directive payload.
+/// delegated AI directives use separate intent payloads.
 fn apply_order_commands(
     mut commands: Commands,
     command_forest: Res<CommandForest>,

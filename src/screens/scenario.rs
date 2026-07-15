@@ -34,6 +34,7 @@ use crate::ui::widgets::{
 use bevy::camera::visibility::Visibility;
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
+use bevy::text::{EditableText, TextCursorStyle};
 use bevy::ui_widgets::{Activate, Button, ValueChange, observe};
 use std::collections::HashMap;
 
@@ -139,6 +140,21 @@ struct SelectMissionAction {
 struct RenameSelectedMissionAction;
 
 #[derive(Component)]
+struct MissionRenameInput;
+
+#[derive(Component)]
+pub struct MissionAssignmentStatus;
+
+#[derive(Resource, Debug, Clone)]
+struct MissionAssignmentFeedback(String);
+
+impl Default for MissionAssignmentFeedback {
+    fn default() -> Self {
+        Self("Select a mission and squad leader to assign.".into())
+    }
+}
+
+#[derive(Component)]
 pub struct ScenarioOutcomeBanner;
 
 #[derive(Component)]
@@ -199,6 +215,7 @@ impl Plugin for ScenarioScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
             .init_resource::<UnitDebugPanelState>()
+            .init_resource::<MissionAssignmentFeedback>()
             .add_systems(
                 OnEnter(crate::GameState::ScenarioScreen),
                 (setup_scenario_ui, setup_selected_scenario),
@@ -218,6 +235,7 @@ impl Plugin for ScenarioScreenPlugin {
                     update_scenario_outcome_banner,
                     update_mission_placement_instruction,
                     update_mission_list,
+                    update_mission_assignment_status,
                 )
                     .run_if(in_state(crate::GameState::ScenarioScreen)),
             );
@@ -276,6 +294,8 @@ fn select_mission(
     };
     if missions.get(action.mission).is_ok() {
         selected.entity = Some(action.mission);
+        selected.preview = true;
+        selected.assignment_mode = true;
     }
 }
 
@@ -283,6 +303,7 @@ fn rename_selected_mission(
     activate: On<Activate>,
     actions: Query<(), With<RenameSelectedMissionAction>>,
     selected: Res<SelectedMission>,
+    inputs: Query<&EditableText, With<MissionRenameInput>>,
     mut missions: Query<(&mut MissionPlan, &mut Name), With<TacticalMission>>,
 ) {
     if actions.get(activate.entity).is_err() {
@@ -291,11 +312,18 @@ fn rename_selected_mission(
     let Some(entity) = selected.entity else {
         return;
     };
+    let Ok(input) = inputs.single() else {
+        return;
+    };
+    let label = input.value().to_string();
+    if label.trim().is_empty() {
+        return;
+    }
     let Ok((mut mission, mut name)) = missions.get_mut(entity) else {
         return;
     };
 
-    mission.label = format!("{} (renamed)", mission.label);
+    mission.label = label;
     *name = Name::new(mission.label.clone());
 }
 
@@ -331,10 +359,6 @@ fn update_mission_placement_instruction(
     placement: Res<MissionPlacementState>,
     mut instructions: Query<(&mut Text, &mut Node), With<MissionPlacementInstruction>>,
 ) {
-    if !placement.is_changed() {
-        return;
-    }
-
     for (mut text, mut node) in &mut instructions {
         let Some(active) = placement.active.as_ref() else {
             node.display = Display::None;
@@ -342,6 +366,24 @@ fn update_mission_placement_instruction(
         };
         **text = active.instruction().to_string();
         node.display = Display::Flex;
+    }
+}
+
+fn update_mission_assignment_status(
+    feedback: Res<MissionAssignmentFeedback>,
+    selected: Res<SelectedMission>,
+    mut statuses: Query<&mut Text, With<MissionAssignmentStatus>>,
+) {
+    if !feedback.is_changed() && !selected.is_changed() {
+        return;
+    }
+    let text = if selected.assignment_mode {
+        "Assign Mission Mode: select a squad leader."
+    } else {
+        &feedback.0
+    };
+    for mut status in &mut statuses {
+        **status = text.to_string();
     }
 }
 
@@ -866,17 +908,23 @@ pub fn setup_scenario_ui(mut commands: Commands) {
             Node {
                 display: Display::None,
                 position_type: PositionType::Absolute,
-                top: Val::Px(18.0),
-                left: Val::Percent(50.0),
+                width: Val::Px(300.0),
+                height: Val::Px(48.0),
+                right: Val::Px(16.0),
+                bottom: Val::Px(116.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.05, 0.02, 0.85)),
-            GlobalZIndex(10),
+            BackgroundColor(Color::srgba(0.05, 0.05, 0.02, 0.95)),
+            BorderColor::all(Color::srgb(1.0, 0.9, 0.15)),
+            GlobalZIndex(100),
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("Place line start"),
+                Text::new("Create Line Start"),
                 TextFont {
                     font_size: FontSize::Px(20.0),
                     ..default()
@@ -1071,10 +1119,32 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                     observe(begin_hold_line_placement),
                                 ),
                             );
+                            mission_menu.spawn((
+                                MissionAssignmentStatus,
+                                Text::new("Select a mission and squad leader to assign."),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.8, 0.8, 0.65)),
+                            ));
+                            mission_menu.spawn((
+                                EditableText::new(""),
+                                TextCursorStyle::default(),
+                                MissionRenameInput,
+                                Node {
+                                    width: Val::Px(180.0),
+                                    height: Val::Px(30.0),
+                                    padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.08, 0.08, 0.08)),
+                                BorderColor::all(Color::srgb(0.55, 0.55, 0.45)),
+                            ));
                             spawn_text_button(
                                 mission_menu,
                                 TextButtonConfig {
-                                    label: "Rename selected".to_string(),
+                                    label: "Apply name".to_string(),
                                     width: Val::Px(180.0),
                                     height: Val::Px(30.0),
                                     text_size: 13.0,

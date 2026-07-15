@@ -16,3 +16,19 @@ and expiry at or before plan creation.
 Tactical mission IDs are scenario-local and allocated monotonically by
 `MissionIdAllocator`. Tactical mission entities are marked `ScenarioScoped`, so
 leaving a scenario removes them with its other runtime entities.
+
+## Assignment
+
+UI and AI call `MissionAssignmentRequested { mission, issuer, assignee }`.
+The temporary UI enters **Assign Mission Mode** when a tactical mission is
+selected from the M menu; the next selected map unit becomes its assignee. The
+request validates that both units are alive soldiers, `issuer` has authority
+through `CommandForest`, and the assignee is a squad leader. It adds the assignee
+to the plan's `MissionAssignees`, then either installs `AssignedMission` locally
+for self-assignment or transmits `PacketPayload::MissionAssignment` through the
+issuer's outbox.
+
+Recipients validate the packet origin and mission snapshot again. A valid,
+unexpired assignment becomes an HTN input only; it never directly writes a
+concrete order. One active assignment is supported per recipient: a greater
+`issued_tick` supersedes it, while equal or older packets are ignored.
