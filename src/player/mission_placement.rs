@@ -6,6 +6,7 @@ use crate::gameplay::missions::{
 };
 use crate::gameplay::simulation::SimulationClock;
 use crate::screens::scenario::ScenarioScoped;
+use crate::ui::active_action::ActiveAction;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -30,6 +31,7 @@ impl Plugin for MissionPlacementPlugin {
                     cancel_mission_placement,
                     place_hold_line_points,
                     refresh_selected_mission,
+                    sync_mission_active_action,
                 )
                     .chain()
                     .in_set(PlayerInputSet::MissionPlacement)
@@ -131,9 +133,12 @@ pub enum PlayerInputSet {
 fn cancel_mission_placement(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut placement: ResMut<MissionPlacementState>,
+    mut selected: ResMut<SelectedMission>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
         placement.cancel();
+        selected.assignment_mode = false;
+        selected.preview = false;
     }
 }
 
@@ -245,16 +250,32 @@ fn refresh_selected_mission(
     }
 }
 
+fn sync_mission_active_action(
+    placement: Res<MissionPlacementState>,
+    selected: Res<SelectedMission>,
+    mut action: ResMut<ActiveAction>,
+) {
+    if let Some(placement) = placement.active.as_ref() {
+        action.set(placement.instruction());
+    } else if selected.assignment_mode {
+        action.set("Assign Mission: Select Squad Leader");
+    } else {
+        action.clear();
+    }
+}
+
 fn reset_mission_ui_state(
     mut placement: ResMut<MissionPlacementState>,
     mut selected: ResMut<SelectedMission>,
     mut labels: ResMut<MissionLabelAllocator>,
+    mut action: ResMut<ActiveAction>,
 ) {
     placement.cancel();
     selected.entity = None;
     selected.preview = false;
     selected.assignment_mode = false;
     labels.reset();
+    action.clear();
 }
 
 /// Converts a left-click in the playable map region into meters. UI areas and
@@ -310,6 +331,24 @@ mod tests {
 
         assert_eq!(plan.validate(), Ok(()));
         assert_eq!(plan.label, "Hold Line 1");
+    }
+
+    #[test]
+    fn escape_cancels_assignment_mode_without_discarding_the_selected_mission() {
+        let mut placement = MissionPlacementState::default();
+        let mut selected = SelectedMission {
+            entity: Some(Entity::PLACEHOLDER),
+            preview: true,
+            assignment_mode: true,
+        };
+
+        placement.cancel();
+        selected.assignment_mode = false;
+        selected.preview = false;
+
+        assert_eq!(selected.entity, Some(Entity::PLACEHOLDER));
+        assert!(!selected.assignment_mode);
+        assert!(!selected.preview);
     }
 
     #[test]

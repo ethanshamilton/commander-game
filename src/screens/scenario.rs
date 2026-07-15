@@ -28,6 +28,7 @@ use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, Re
 use crate::player::mission_placement::{MissionPlacementState, SelectedMission};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::scenarios::{ScenarioDefinition, SelectedScenario};
+use crate::ui::active_action::{ActiveActionPanel, ActiveActionText};
 use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
 };
@@ -124,9 +125,6 @@ struct ScenarioMenuToggle {
 
 #[derive(Component)]
 struct BeginHoldLinePlacementAction;
-
-#[derive(Component)]
-pub struct MissionPlacementInstruction;
 
 #[derive(Component)]
 pub struct MissionList;
@@ -233,7 +231,6 @@ impl Plugin for ScenarioScreenPlugin {
                     update_simulation_perf_text,
                     update_simulation_perf_breakdown,
                     update_scenario_outcome_banner,
-                    update_mission_placement_instruction,
                     update_mission_list,
                     update_mission_assignment_status,
                 )
@@ -352,20 +349,6 @@ pub fn update_menu_visibility(
         } else {
             Visibility::Hidden
         };
-    }
-}
-
-fn update_mission_placement_instruction(
-    placement: Res<MissionPlacementState>,
-    mut instructions: Query<(&mut Text, &mut Node), With<MissionPlacementInstruction>>,
-) {
-    for (mut text, mut node) in &mut instructions {
-        let Some(active) = placement.active.as_ref() else {
-            node.display = Display::None;
-            continue;
-        };
-        **text = active.instruction().to_string();
-        node.display = Display::Flex;
     }
 }
 
@@ -904,7 +887,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
     commands
         .spawn((
             ScenarioScreenRoot,
-            MissionPlacementInstruction,
+            ActiveActionPanel,
             Node {
                 display: Display::None,
                 position_type: PositionType::Absolute,
@@ -924,7 +907,8 @@ pub fn setup_scenario_ui(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                Text::new("Create Line Start"),
+                ActiveActionText,
+                Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(20.0),
                     ..default()

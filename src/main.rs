@@ -18,6 +18,7 @@ use bevy::window::{MonitorSelection, WindowMode, WindowPlugin};
 use gameplay::GameplayPlugins;
 use player::PlayerPlugins;
 use screens::ScreensPlugins;
+use ui::UiPlugin;
 
 fn main() {
     App::new()
@@ -35,6 +36,7 @@ fn main() {
         .add_plugins(GameplayPlugins)
         .add_plugins(AiPlugins)
         .add_plugins(PlayerPlugins)
+        .add_plugins(UiPlugin)
         .add_plugins(ScreensPlugins)
         .init_state::<GameState>()
         .run();
