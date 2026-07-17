@@ -5,6 +5,7 @@ use crate::actors::units::{Alive, Allegiance, Dead, Soldier};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
+use crate::gameplay::spatial_index::BattlefieldSpatialGrid;
 use crate::gameplay::terrain::TerrainHeight;
 use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;
@@ -139,6 +140,7 @@ pub enum ContactType {
 pub fn update_visual_perception(
     clock: Res<SimulationClock>,
     map: Res<BattlefieldMap>,
+    grid: Res<BattlefieldSpatialGrid>,
     mut observers: Query<
         (
             Entity,
@@ -153,7 +155,6 @@ pub fn update_visual_perception(
     >,
     targets: Query<
         (
-            Entity,
             &BattlefieldPosition,
             Option<&EyeHeight>,
             &SensorSignature,
@@ -175,21 +176,24 @@ pub fn update_visual_perception(
     {
         let observer_position_m = observer_position.0;
 
-        for (
-            target,
-            target_position,
-            target_eye_height,
-            signature,
-            target_allegiance,
-            target_dead,
-        ) in &targets
-        {
+        grid.visit_candidates(observer_position_m, visual_sensor.range_m, |target| {
             if target == observer {
-                continue;
+                return;
             }
 
+            let Ok((
+                target_position,
+                target_eye_height,
+                signature,
+                target_allegiance,
+                target_dead,
+            )) = targets.get(target)
+            else {
+                return;
+            };
+
             if signature.visual <= 0.0 {
-                continue;
+                return;
             }
 
             let target_position_m = target_position.0;
@@ -199,7 +203,7 @@ pub fn update_visual_perception(
                 target_position_m,
                 visual_sensor,
             ) {
-                continue;
+                return;
             }
 
             let target_eye_height_m = target_eye_height
@@ -213,7 +217,7 @@ pub fn update_visual_perception(
                 target_position_m,
                 target_eye_height_m,
             ) {
-                continue;
+                return;
             }
 
             upsert_contact(
@@ -237,12 +241,13 @@ pub fn update_visual_perception(
                     },
                 },
             );
-        }
+        });
     }
 }
 
 pub fn update_auditory_perception(
     clock: Res<SimulationClock>,
+    grid: Res<BattlefieldSpatialGrid>,
     mut observers: Query<
         (
             Entity,
@@ -255,7 +260,6 @@ pub fn update_auditory_perception(
     >,
     targets: Query<
         (
-            Entity,
             &BattlefieldPosition,
             &SensorSignature,
             &Allegiance,
@@ -264,14 +268,36 @@ pub fn update_auditory_perception(
         With<Soldier>,
     >,
 ) {
+    // Acoustic signatures scale effective range per target. Find the largest
+    // current multiplier once so the broad phase remains conservative without
+    // imposing a new bound on signature values.
+    let max_acoustic_signature = targets
+        .iter()
+        .filter_map(|(_, signature, _, dead)| {
+            (dead.is_none() && signature.acoustic.is_finite() && signature.acoustic > 0.0)
+                .then_some(signature.acoustic)
+        })
+        .fold(0.0_f32, f32::max);
+
     for (observer, observer_position, auditory_sensor, observer_allegiance, mut memory) in
         &mut observers
     {
         let observer_position_m = observer_position.0;
+        let broad_phase_range_m = auditory_sensor.range_m * max_acoustic_signature;
 
-        for (target, target_position, signature, target_allegiance, target_dead) in &targets {
-            if target == observer || target_dead.is_some() || signature.acoustic <= 0.0 {
-                continue;
+        grid.visit_candidates(observer_position_m, broad_phase_range_m, |target| {
+            if target == observer {
+                return;
+            }
+
+            let Ok((target_position, signature, target_allegiance, target_dead)) =
+                targets.get(target)
+            else {
+                return;
+            };
+
+            if target_dead.is_some() || signature.acoustic <= 0.0 {
+                return;
             }
 
             let effective_range_m = auditory_sensor.range_m * signature.acoustic;
@@ -280,7 +306,7 @@ pub fn update_auditory_perception(
             if observer_position_m.distance_squared(target_position_m)
                 > effective_range_m * effective_range_m
             {
-                continue;
+                return;
             }
 
             upsert_contact(
@@ -300,7 +326,7 @@ pub fn update_auditory_perception(
                     },
                 },
             );
-        }
+        });
     }
 }
 
@@ -371,7 +397,12 @@ fn upsert_contact(memory: &mut PerceptionMemory, contact: Contact) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::units::{Rank, Role, Side};
+    use crate::gameplay::spatial_index::{
+        BattlefieldSpatialGrid, rebuild_battlefield_spatial_grid,
+    };
     use crate::gameplay::terrain::TerrainDefinition;
+    use bevy::ecs::system::RunSystemOnce;
 
     /// Flat ground at 0 with a cylindrical wall: analytic LOS oracle.
     struct Wall {
@@ -489,5 +520,67 @@ mod tests {
             .find(|c| c.kind == ContactKind::Visual)
             .unwrap();
         assert_eq!(visual.last_seen_tick, 2);
+    }
+
+    #[test]
+    fn spatial_grid_drives_visual_and_auditory_detection() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock {
+            tick: 7,
+            elapsed_s: 0.35,
+            ..default()
+        });
+        world.insert_resource(BattlefieldMap::default());
+        world.insert_resource(BattlefieldSpatialGrid::default());
+
+        let observer = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Blue },
+                BattlefieldPosition(Vec2::ZERO),
+                Heading(0.0),
+                VisualSensor::default(),
+                AuditorySensor::default(),
+                EyeHeight::default(),
+                SensorSignature::default(),
+                PerceptionMemory::default(),
+            ))
+            .id();
+        let target = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Allegiance { side: Side::Red },
+                BattlefieldPosition(Vec2::new(30.0, 0.0)),
+                EyeHeight::default(),
+                SensorSignature::default(),
+                PerceptionMemory::default(),
+            ))
+            .id();
+
+        world
+            .run_system_once(rebuild_battlefield_spatial_grid)
+            .unwrap();
+        world.run_system_once(update_visual_perception).unwrap();
+        world.run_system_once(update_auditory_perception).unwrap();
+
+        let memory = world.get::<PerceptionMemory>(observer).unwrap();
+        assert!(memory.contacts.iter().any(|contact| {
+            contact.target == target
+                && contact.kind == ContactKind::Visual
+                && contact.contact_type == ContactType::Hostile
+        }));
+        assert!(memory.contacts.iter().any(|contact| {
+            contact.target == target
+                && contact.kind == ContactKind::Auditory
+                && contact.contact_type == ContactType::Hostile
+        }));
     }
 }

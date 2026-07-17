@@ -7,7 +7,6 @@ Running/evergreen notes file for the project.
 - Will need a way to represent structures
 
 ## GRAPHICS
-- Render is too slow. If you grab the map and start moving it around it gets laggy. Right now everything is getting calculated every tick so we need to start implementing some optimizations.
 
 ## COMMAND
 

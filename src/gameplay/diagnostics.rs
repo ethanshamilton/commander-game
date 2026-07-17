@@ -15,6 +15,7 @@ pub const PHASE_NAMES: [&str; PHASE_COUNT] = [
     "Clock",
     "Orders",
     "Movement",
+    "SpatialIndex",
     "Sensors",
     "Comms",
     "Reports",
@@ -24,7 +25,7 @@ pub const PHASE_NAMES: [&str; PHASE_COUNT] = [
     "Cleanup",
 ];
 
-pub const PHASE_COUNT: usize = 10;
+pub const PHASE_COUNT: usize = 11;
 
 pub struct GameplayDiagnosticsPlugin;
 
@@ -44,23 +45,26 @@ impl Plugin for GameplayDiagnosticsPlugin {
                         .before(SimulationSet::Movement),
                     phase_boundary(2)
                         .after(SimulationSet::Movement)
-                        .before(SimulationSet::Sensors),
+                        .before(SimulationSet::SpatialIndex),
                     phase_boundary(3)
+                        .after(SimulationSet::SpatialIndex)
+                        .before(SimulationSet::Sensors),
+                    phase_boundary(4)
                         .after(SimulationSet::Sensors)
                         .before(SimulationSet::Comms),
-                    phase_boundary(4)
+                    phase_boundary(5)
                         .after(SimulationSet::Comms)
                         .before(SimulationSet::Reports),
-                    phase_boundary(5)
+                    phase_boundary(6)
                         .after(SimulationSet::Reports)
                         .before(SimulationSet::Thinking),
-                    phase_boundary(6)
+                    phase_boundary(7)
                         .after(SimulationSet::Thinking)
                         .before(SimulationSet::Combat),
-                    phase_boundary(7)
+                    phase_boundary(8)
                         .after(SimulationSet::Combat)
                         .before(SimulationSet::Objectives),
-                    phase_boundary(8)
+                    phase_boundary(9)
                         .after(SimulationSet::Objectives)
                         .before(SimulationSet::Cleanup),
                     end_simulation_tick.after(SimulationSet::Cleanup),

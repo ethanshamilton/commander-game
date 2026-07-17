@@ -16,6 +16,7 @@ pub mod packets;
 pub mod rendering;
 pub mod simulation;
 pub mod spatial;
+pub mod spatial_index;
 pub mod terrain;
 
 use audio::GameplayAudioPlugin;
@@ -31,6 +32,7 @@ use objectives::ObjectivesPlugin;
 use packets::PacketsPlugin;
 use rendering::GameplayRenderingPlugin;
 use simulation::SimulationPlugin;
+use spatial_index::SpatialIndexPlugin;
 
 pub struct GameplayPlugins;
 
@@ -38,6 +40,7 @@ impl PluginGroup for GameplayPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(SimulationPlugin)
+            .add(SpatialIndexPlugin)
             .add(UnitLifecyclePlugin)
             .add(MissionsPlugin)
             .add(DebugPowersPlugin)
