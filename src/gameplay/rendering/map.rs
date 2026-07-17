@@ -11,14 +11,24 @@ pub struct MapRenderingPlugin;
 
 impl Plugin for MapRenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<CachedMapContours>().add_systems(
             Update,
-            (draw_battlefield_grid, draw_topography)
+            (
+                cache_map_contours,
+                draw_battlefield_grid,
+                draw_cached_topography,
+            )
                 .chain()
                 .in_set(RenderingSet::Map)
                 .run_if(in_state(GameState::ScenarioScreen)),
         );
     }
+}
+
+/// Static contour geometry in battlefield meters. Rebuilt only when the map changes.
+#[derive(Resource, Debug, Default)]
+pub struct CachedMapContours {
+    pub segments_m: Vec<(Vec2, Vec2)>,
 }
 
 fn draw_battlefield_grid(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
@@ -54,8 +64,12 @@ const TOPOGRAPHY_SAMPLE_SPACING_METERS: f32 = 2.5;
 const CONTOUR_INTERVAL_METERS: f32 = 2.0;
 const MAX_CONTOUR_HEIGHT_METERS: f32 = 20.0;
 
-fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
-    let contour_color = Color::srgb(0.72, 0.72, 0.72);
+fn cache_map_contours(map: Res<BattlefieldMap>, mut cache: ResMut<CachedMapContours>) {
+    if !map.is_changed() {
+        return;
+    }
+
+    cache.segments_m.clear();
     let min_m = -map.size_m / 2.0;
     let cells = (map.size_m / TOPOGRAPHY_SAMPLE_SPACING_METERS).as_uvec2();
 
@@ -77,9 +91,8 @@ fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
 
             let mut contour = CONTOUR_INTERVAL_METERS;
             while contour <= MAX_CONTOUR_HEIGHT_METERS {
-                draw_contour_cell(
-                    &mut gizmos,
-                    contour_color,
+                cache_contour_cell(
+                    &mut cache.segments_m,
                     contour,
                     [(p00, h00), (p10, h10), (p11, h11), (p01, h01)],
                 );
@@ -89,7 +102,19 @@ fn draw_topography(mut gizmos: Gizmos, map: Res<BattlefieldMap>) {
     }
 }
 
-fn draw_contour_cell(gizmos: &mut Gizmos, color: Color, contour_m: f32, corners: [(Vec2, f32); 4]) {
+fn draw_cached_topography(mut gizmos: Gizmos, cache: Res<CachedMapContours>) {
+    let color = Color::srgb(0.72, 0.72, 0.72);
+
+    for &(start_m, end_m) in &cache.segments_m {
+        gizmos.line_2d(start_m.map(meters), end_m.map(meters), color);
+    }
+}
+
+fn cache_contour_cell(
+    segments_m: &mut Vec<(Vec2, Vec2)>,
+    contour_m: f32,
+    corners: [(Vec2, f32); 4],
+) {
     let mut intersections = [Vec2::ZERO; 4];
     let mut count = 0;
 
@@ -123,7 +148,7 @@ fn draw_contour_cell(gizmos: &mut Gizmos, color: Color, contour_m: f32, corners:
     );
 
     for segment in intersections[..count].chunks_exact(2) {
-        gizmos.line_2d(segment[0].map(meters), segment[1].map(meters), color);
+        segments_m.push((segment[0], segment[1]));
     }
 }
 

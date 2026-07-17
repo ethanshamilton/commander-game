@@ -6,6 +6,9 @@ Running/evergreen notes file for the project.
 - Will need terrain types (i.e. grass, road, water)
 - Will need a way to represent structures
 
+## GRAPHICS
+- Render is too slow. If you grab the map and start moving it around it gets laggy. Right now everything is getting calculated every tick so we need to start implementing some optimizations.
+
 ## COMMAND
 
 ### HIERARCHY
@@ -54,8 +57,8 @@ Running/evergreen notes file for the project.
 
 ## TOOLS
 
-### MISSION EDITOR
-- Would be useful to have a mission editor which allows units/squads to be placed and set victory conditions etc. Just something to set the initial state of a mission.
+### SCENARIO EDITOR
+- Would be useful to have a scenario editor which allows units/squads to be placed and set victory conditions etc. Just something to set the initial state of a scenario.
 
 ### MAP EDITOR
 - Right now map design is kind of inscrutable because it's just implemented with a hardcoded height map. If there were a way to create these with a tool, that would be nice.

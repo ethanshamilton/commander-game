@@ -116,7 +116,8 @@ pub fn deliberate_autonomous_units(
         match runner {
             Some(mut runner) => {
                 if plan_conflicts_with_external_order(&runner.plan, unit_source, combat_source) {
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -133,7 +134,8 @@ pub fn deliberate_autonomous_units(
 
                 let Some(candidate) = plan(domain, state) else {
                     runner.last_state_digest = digest;
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -145,7 +147,8 @@ pub fn deliberate_autonomous_units(
 
                 if plan_conflicts_with_external_order(&candidate, unit_source, combat_source) {
                     runner.last_state_digest = digest;
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -157,7 +160,8 @@ pub fn deliberate_autonomous_units(
 
                 if !should_adopt_candidate(&candidate, &runner.plan) {
                     runner.last_state_digest = digest;
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -167,7 +171,8 @@ pub fn deliberate_autonomous_units(
                     continue;
                 }
 
-                trace.push(
+                trace_transition(
+                    &mut trace,
                     trace_tick,
                     trace_elapsed_s,
                     TraceEvent::Replanned {
@@ -193,7 +198,8 @@ pub fn deliberate_autonomous_units(
             }
             None => {
                 let Some(candidate) = plan(domain, state) else {
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -204,7 +210,8 @@ pub fn deliberate_autonomous_units(
                 };
 
                 if plan_conflicts_with_external_order(&candidate, unit_source, combat_source) {
-                    trace.push(
+                    trace_transition(
+                        &mut trace,
                         trace_tick,
                         trace_elapsed_s,
                         TraceEvent::PlanRejected {
@@ -214,7 +221,8 @@ pub fn deliberate_autonomous_units(
                     continue;
                 }
 
-                trace.push(
+                trace_transition(
+                    &mut trace,
                     trace_tick,
                     trace_elapsed_s,
                     TraceEvent::Replanned {
@@ -256,7 +264,12 @@ pub fn start_pending_steps(
         }
 
         if runner.current >= runner.plan.steps.len() {
-            trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
+            trace_transition(
+                &mut trace,
+                trace_tick,
+                trace_elapsed_s,
+                TraceEvent::PlanCompleted,
+            );
             commands.entity(entity).remove::<PlanRunner>();
             continue;
         }
@@ -264,7 +277,8 @@ pub fn start_pending_steps(
         let step = runner.plan.steps[runner.current].clone();
 
         if !(step.preconditions)(&belief.state) {
-            trace.push(
+            trace_transition(
+                &mut trace,
                 trace_tick,
                 trace_elapsed_s,
                 TraceEvent::StepFailed {
@@ -278,7 +292,8 @@ pub fn start_pending_steps(
 
         step.operator.dispatch(&mut commands, entity);
 
-        trace.push(
+        trace_transition(
+            &mut trace,
             trace_tick,
             trace_elapsed_s,
             TraceEvent::StepStarted {
@@ -326,7 +341,12 @@ pub fn advance_plan_execution(
         }
 
         if runner.current >= runner.plan.steps.len() {
-            trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
+            trace_transition(
+                &mut trace,
+                trace_tick,
+                trace_elapsed_s,
+                TraceEvent::PlanCompleted,
+            );
             clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
             clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
             commands.entity(entity).remove::<PlanRunner>();
@@ -345,14 +365,20 @@ pub fn advance_plan_execution(
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 runner.current += 1;
                 if runner.current >= runner.plan.steps.len() {
-                    trace.push(trace_tick, trace_elapsed_s, TraceEvent::PlanCompleted);
+                    trace_transition(
+                        &mut trace,
+                        trace_tick,
+                        trace_elapsed_s,
+                        TraceEvent::PlanCompleted,
+                    );
                     commands.entity(entity).remove::<PlanRunner>();
                 } else {
                     runner.step_state = StepState::Pending;
                 }
             }
             StepPoll::Failed(reason) => {
-                trace.push(
+                trace_transition(
+                    &mut trace,
                     trace_tick,
                     trace_elapsed_s,
                     TraceEvent::StepFailed {
@@ -373,6 +399,22 @@ fn trace_time(clock: Option<Res<crate::gameplay::simulation::SimulationClock>>) 
         .as_deref()
         .map(|clock| (clock.tick, clock.elapsed_s))
         .unwrap_or((0, 0.0))
+}
+
+/// Record only semantic transitions. Checking through `Mut` before calling a
+/// mutable `DecisionTrace` method avoids marking the component changed when an
+/// identical event repeats on the next simulation tick.
+fn trace_transition(
+    trace: &mut Mut<'_, DecisionTrace>,
+    tick: u64,
+    elapsed_s: f32,
+    event: TraceEvent,
+) {
+    if trace.latest().is_some_and(|latest| latest == &event) {
+        return;
+    }
+
+    trace.push(tick, elapsed_s, event);
 }
 
 fn should_adopt_candidate(candidate: &Plan, current: &Plan) -> bool {
@@ -417,14 +459,15 @@ fn operator_writes_combat_order(operator: BoundOperator) -> bool {
 }
 
 fn trace_plan_created(
-    trace: &mut DecisionTrace,
+    trace: &mut Mut<'_, DecisionTrace>,
     tick: u64,
     elapsed_s: f32,
     root: TaskId,
     domain: &Domain,
     plan: &Plan,
 ) {
-    trace.push(
+    trace_transition(
+        trace,
         tick,
         elapsed_s,
         TraceEvent::PlanCreated {
@@ -456,6 +499,32 @@ mod tests {
                 kind: ItemKind::Ammo,
                 count: ammo,
             }],
+        }
+    }
+
+    #[test]
+    fn trace_transition_suppresses_only_consecutive_duplicates_without_marking_changed() {
+        let repeated = TraceEvent::PlanRejected {
+            reason: PlanRejectionReason::NoValidPlan,
+        };
+        let mut initial = DecisionTrace::default();
+        initial.push(1, 0.05, repeated.clone());
+
+        let mut world = World::new();
+        let entity = world.spawn(initial).id();
+        world.clear_trackers();
+
+        {
+            let mut trace = world.get_mut::<DecisionTrace>(entity).unwrap();
+            assert!(!trace.is_changed());
+            trace_transition(&mut trace, 2, 0.10, repeated.clone());
+            assert!(!trace.is_changed());
+            assert_eq!(trace.records().count(), 1);
+
+            trace_transition(&mut trace, 3, 0.15, TraceEvent::PlanCompleted);
+            trace_transition(&mut trace, 4, 0.20, repeated);
+            assert!(trace.is_changed());
+            assert_eq!(trace.records().count(), 3);
         }
     }
 

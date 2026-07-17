@@ -50,7 +50,9 @@ around it, so the decomposition logic is unit-testable without spinning up an
   combat writes. Htn- and Doctrine-sourced orders never suppress planning.
 - **`trace.rs`** — `DecisionTrace`/`TraceEvent`, a bounded ring buffer per unit
   recording plan creation/rejection/replan/step events, for debugging *why* a
-  unit did what it did.
+  unit did what it did. Executor writes are edge-triggered: consecutive
+  semantically identical events are suppressed without marking the component
+  changed, while the same event after an intervening transition is retained.
 
 `PlannerState` is not ground-truth world state — it's what the unit currently
 believes, synthesized from its own memory/components. The planner must never

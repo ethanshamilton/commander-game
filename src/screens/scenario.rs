@@ -33,6 +33,7 @@ use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
 };
 use bevy::camera::visibility::Visibility;
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle};
@@ -101,6 +102,9 @@ impl Default for UnitDebugPanelState {
 
 #[derive(Component)]
 pub struct SimulationClockText;
+
+#[derive(Component)]
+pub struct RenderPerfText;
 
 #[derive(Component)]
 pub struct SimulationPerfText;
@@ -227,7 +231,11 @@ impl Plugin for ScenarioScreenPlugin {
                 (
                     update_menu_visibility,
                     update_selected_unit_info_panel,
+                    update_selected_unit_debug_chrome,
+                    update_selected_unit_trace,
+                    update_selected_unit_beliefs,
                     update_simulation_clock_text,
+                    update_render_perf_text,
                     update_simulation_perf_text,
                     update_simulation_perf_breakdown,
                     update_scenario_outcome_banner,
@@ -428,19 +436,8 @@ pub fn update_selected_unit_info_panel(
     clock: Res<SimulationClock>,
     control: Res<PlayerControl>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    debug_state: Res<UnitDebugPanelState>,
-    mut node_queries: ParamSet<(
-        Query<&mut Node, With<SelectedUnitInfoPanel>>,
-        Query<&mut Node, With<SelectedUnitTraceBody>>,
-        Query<&mut Node, With<SelectedUnitBeliefsBody>>,
-    )>,
-    mut text_queries: ParamSet<(
-        Query<&mut Text, With<SelectedUnitInfoText>>,
-        Query<&mut Text, With<SelectedUnitTraceToggleText>>,
-        Query<&mut Text, With<SelectedUnitTraceText>>,
-        Query<&mut Text, With<SelectedUnitBeliefsToggleText>>,
-        Query<&mut Text, With<SelectedUnitBeliefsText>>,
-    )>,
+    mut panel_query: Query<&mut Node, With<SelectedUnitInfoPanel>>,
+    mut text_query: Query<&mut Text, With<SelectedUnitInfoText>>,
     units: Query<(
         &Soldier,
         &Allegiance,
@@ -451,17 +448,40 @@ pub fn update_selected_unit_info_panel(
         Option<&Heading>,
         Option<&VisualSensor>,
         Option<&PerceptionMemory>,
-        Option<&DecisionTrace>,
-        Option<&PlannerBelief>,
     )>,
+    changed_units: Query<
+        (),
+        Or<(
+            Changed<Soldier>,
+            Changed<Allegiance>,
+            Changed<Health>,
+            Changed<Mobility>,
+            Changed<Inventory>,
+            Changed<BattlefieldPosition>,
+            Changed<Heading>,
+            Changed<VisualSensor>,
+            Changed<PerceptionMemory>,
+        )>,
+    >,
 ) {
-    let mut panel_query = node_queries.p0();
+    let unit_changed = selected
+        .entity
+        .is_some_and(|entity| changed_units.get(entity).is_ok());
+    if !selected.is_changed()
+        && !clock.is_changed()
+        && !control.is_changed()
+        && !knowledge.is_changed()
+        && !unit_changed
+    {
+        return;
+    }
+
     let Ok(mut panel_node) = panel_query.single_mut() else {
         return;
     };
 
     let Some(entity) = selected.entity else {
-        panel_node.display = Display::None;
+        set_display_if_changed(&mut panel_node, Display::None);
         return;
     };
 
@@ -475,20 +495,18 @@ pub fn update_selected_unit_info_panel(
         heading,
         visual_sensor,
         memory,
-        trace,
-        belief,
     )) = units.get(entity)
     else {
-        panel_node.display = Display::None;
+        set_display_if_changed(&mut panel_node, Display::None);
         return;
     };
 
     let Some(known) = knowledge.get(entity) else {
-        panel_node.display = Display::None;
+        set_display_if_changed(&mut panel_node, Display::None);
         return;
     };
 
-    panel_node.display = Display::Flex;
+    set_display_if_changed(&mut panel_node, Display::Flex);
 
     let is_current = known.last_reported_tick == clock.tick;
     let is_controlled_side = allegiance.side == control.side;
@@ -521,86 +539,136 @@ pub fn update_selected_unit_info_panel(
         0
     };
 
-    drop(panel_node);
-    drop(panel_query);
+    let next = format!(
+        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
+        allegiance.side,
+        soldier.rank,
+        soldier.role,
+        health.current,
+        health.max,
+        mobility.speed,
+        inventory.ammo_count(),
+        position_m.x,
+        position_m.y,
+        heading_text,
+        sensor_text,
+        contact_count,
+    );
 
-    {
-        let mut text_query = text_queries.p0();
-        let Ok(mut text) = text_query.single_mut() else {
-            return;
+    if let Ok(mut text) = text_query.single_mut() {
+        set_text_if_changed(&mut text, next);
+    }
+}
+
+fn update_selected_unit_debug_chrome(
+    debug_state: Res<UnitDebugPanelState>,
+    mut node_queries: ParamSet<(
+        Query<&mut Node, With<SelectedUnitTraceBody>>,
+        Query<&mut Node, With<SelectedUnitBeliefsBody>>,
+    )>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<SelectedUnitTraceToggleText>>,
+        Query<&mut Text, With<SelectedUnitBeliefsToggleText>>,
+    )>,
+) {
+    if !debug_state.is_changed() {
+        return;
+    }
+
+    if let Ok(mut body) = node_queries.p0().single_mut() {
+        let display = if debug_state.trace_open {
+            Display::Flex
+        } else {
+            Display::None
         };
-
-        **text = format!(
-            "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
-            allegiance.side,
-            soldier.rank,
-            soldier.role,
-            health.current,
-            health.max,
-            mobility.speed,
-            inventory.ammo_count(),
-            position_m.x,
-            position_m.y,
-            heading_text,
-            sensor_text,
-            contact_count,
-        );
+        set_display_if_changed(&mut body, display);
+    }
+    if let Ok(mut body) = node_queries.p1().single_mut() {
+        let display = if debug_state.beliefs_open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        set_display_if_changed(&mut body, display);
     }
 
-    {
-        let mut toggle_query = text_queries.p1();
-        if let Ok(mut toggle_text) = toggle_query.single_mut() {
-            **toggle_text = format!(
-                "{} Decision Trace",
-                if debug_state.trace_open { "▾" } else { "▸" }
-            );
-        }
+    if let Ok(mut text) = text_queries.p0().single_mut() {
+        let next = if debug_state.trace_open {
+            "▾ Decision Trace"
+        } else {
+            "▸ Decision Trace"
+        };
+        set_text_if_changed(&mut text, next.to_string());
     }
-    {
-        let mut body_query = node_queries.p1();
-        if let Ok(mut body_node) = body_query.single_mut() {
-            body_node.display = if debug_state.trace_open {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
+    if let Ok(mut text) = text_queries.p1().single_mut() {
+        let next = if debug_state.beliefs_open {
+            "▾ Beliefs"
+        } else {
+            "▸ Beliefs"
+        };
+        set_text_if_changed(&mut text, next.to_string());
     }
-    {
-        let mut trace_text_query = text_queries.p2();
-        if let Ok(mut trace_text) = trace_text_query.single_mut() {
-            **trace_text = format_trace_view(trace);
-        }
+}
+
+fn update_selected_unit_trace(
+    selected: Res<SelectedUnit>,
+    debug_state: Res<UnitDebugPanelState>,
+    traces: Query<&DecisionTrace>,
+    changed_traces: Query<(), Changed<DecisionTrace>>,
+    mut text_query: Query<&mut Text, With<SelectedUnitTraceText>>,
+) {
+    if !debug_state.trace_open {
+        return;
     }
 
-    {
-        let mut toggle_query = text_queries.p3();
-        if let Ok(mut toggle_text) = toggle_query.single_mut() {
-            **toggle_text = format!(
-                "{} Beliefs",
-                if debug_state.beliefs_open {
-                    "▾"
-                } else {
-                    "▸"
-                }
-            );
-        }
+    let Some(entity) = selected.entity else {
+        return;
+    };
+    let trace_changed = changed_traces.get(entity).is_ok();
+    if !selected.is_changed() && !debug_state.is_changed() && !trace_changed {
+        return;
     }
-    {
-        let mut body_query = node_queries.p2();
-        if let Ok(mut body_node) = body_query.single_mut() {
-            body_node.display = if debug_state.beliefs_open {
-                Display::Flex
-            } else {
-                Display::None
-            };
-        }
+
+    let next = format_trace_view(traces.get(entity).ok());
+    if let Ok(mut text) = text_query.single_mut() {
+        set_text_if_changed(&mut text, next);
     }
-    {
-        let mut beliefs_text_query = text_queries.p4();
-        if let Ok(mut beliefs_text) = beliefs_text_query.single_mut() {
-            **beliefs_text = format_beliefs_view(belief);
-        }
+}
+
+fn update_selected_unit_beliefs(
+    selected: Res<SelectedUnit>,
+    debug_state: Res<UnitDebugPanelState>,
+    beliefs: Query<&PlannerBelief>,
+    changed_beliefs: Query<(), Changed<PlannerBelief>>,
+    mut text_query: Query<&mut Text, With<SelectedUnitBeliefsText>>,
+) {
+    if !debug_state.beliefs_open {
+        return;
+    }
+
+    let Some(entity) = selected.entity else {
+        return;
+    };
+    let belief_changed = changed_beliefs.get(entity).is_ok();
+    if !selected.is_changed() && !debug_state.is_changed() && !belief_changed {
+        return;
+    }
+
+    let next = format_beliefs_view(beliefs.get(entity).ok());
+    if let Ok(mut text) = text_query.single_mut() {
+        set_text_if_changed(&mut text, next);
+    }
+}
+
+fn set_display_if_changed(node: &mut Node, display: Display) {
+    if node.display != display {
+        node.display = display;
+    }
+}
+
+fn set_text_if_changed(text: &mut Text, next: String) {
+    if text.0 != next {
+        text.0 = next;
     }
 }
 
@@ -757,6 +825,43 @@ pub fn update_scenario_outcome_banner(
             *text_color = TextColor(Color::srgb(1.0, 0.25, 0.2));
         }
     }
+}
+
+pub fn update_render_perf_text(
+    diagnostics: Res<DiagnosticsStore>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<RenderPerfText>>,
+) {
+    const TARGET_FPS: f64 = 60.0;
+
+    let Some(fps) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diagnostic| diagnostic.smoothed().or_else(|| diagnostic.value()))
+    else {
+        return;
+    };
+
+    let Ok((mut text, mut text_color)) = text_query.single_mut() else {
+        return;
+    };
+
+    let attainment = fps / TARGET_FPS;
+    let attainment_percent = attainment * 100.0;
+    let filled = (attainment * 10.0).round().clamp(0.0, 10.0) as usize;
+    let meter = format!("{}{}", "█".repeat(filled), "░".repeat(10 - filled));
+
+    **text = format!(
+        "RENDER {fps:03.0} FPS / {TARGET_FPS:03.0} FPS [{meter}] {attainment_percent:03.0}%"
+    );
+
+    *text_color = TextColor(if attainment >= 1.0 {
+        Color::srgb(0.7, 1.0, 0.7)
+    } else if attainment >= 0.8 {
+        Color::srgb(1.0, 0.9, 0.0)
+    } else if attainment >= 0.5 {
+        Color::srgb(1.0, 0.55, 0.0)
+    } else {
+        Color::srgb(1.0, 0.1, 0.1)
+    });
 }
 
 pub fn update_simulation_perf_text(
@@ -942,6 +1047,16 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                 Text::new("T+00:00  tick 0"),
                 TextFont {
                     font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.7, 1.0, 0.7)),
+            ));
+
+            parent.spawn((
+                RenderPerfText,
+                Text::new("RENDER 000 FPS / 060 FPS [░░░░░░░░░░] 000%"),
+                TextFont {
+                    font_size: FontSize::Px(14.0),
                     ..default()
                 },
                 TextColor(Color::srgb(0.7, 1.0, 0.7)),

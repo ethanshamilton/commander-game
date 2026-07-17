@@ -63,7 +63,7 @@ pub struct TraceRecord {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceEvent {
     PlanCreated {
         root: &'static str,

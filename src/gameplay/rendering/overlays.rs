@@ -32,22 +32,30 @@ pub struct TacticalOverlayRenderingPlugin;
 
 impl Plugin for TacticalOverlayRenderingPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                draw_selected_unit_sensor_cone,
-                draw_selected_unit_weapon_range,
-                draw_selected_unit_order,
-                draw_selected_unit_contacts,
-                draw_selected_unit_comms,
-                draw_selected_unit_command_relations,
-                draw_enemy_contact_boxes,
-                draw_mission_placement_overlay,
-                draw_finalized_mission_overlays,
+        app.init_resource::<CachedSensorCone>()
+            .add_systems(
+                Update,
+                recompute_selected_unit_sensor_cone
+                    .before(draw_selected_unit_sensor_cone)
+                    .in_set(RenderingSet::Overlays)
+                    .run_if(in_state(GameState::ScenarioScreen)),
             )
-                .in_set(RenderingSet::Overlays)
-                .run_if(in_state(GameState::ScenarioScreen)),
-        );
+            .add_systems(
+                Update,
+                (
+                    draw_selected_unit_sensor_cone,
+                    draw_selected_unit_weapon_range,
+                    draw_selected_unit_order,
+                    draw_selected_unit_contacts,
+                    draw_selected_unit_comms,
+                    draw_selected_unit_command_relations,
+                    draw_enemy_contact_boxes,
+                    draw_mission_placement_overlay,
+                    draw_finalized_mission_overlays,
+                )
+                    .in_set(RenderingSet::Overlays)
+                    .run_if(in_state(GameState::ScenarioScreen)),
+            );
     }
 }
 
@@ -64,6 +72,12 @@ const MISSION_RALLY_RADIUS_M: f32 = 1.5;
 const MISSION_LABEL_OFFSET_M: f32 = 2.0;
 const IN_PROGRESS_MISSION_COLOR: Color = Color::srgb(1.0, 0.9, 0.1);
 const FINALIZED_MISSION_COLOR: Color = Color::WHITE;
+
+#[derive(Resource, Debug, Default)]
+struct CachedSensorCone {
+    origin: Option<Vec2>,
+    endpoints: Vec<Vec2>,
+}
 
 fn draw_mission_placement_overlay(
     placement: Res<MissionPlacementState>,
@@ -176,7 +190,7 @@ fn midpoint(a: Vec2, b: Vec2) -> Vec2 {
     (a + b) / 2.0
 }
 
-fn draw_selected_unit_sensor_cone(
+fn recompute_selected_unit_sensor_cone(
     selected: Res<SelectedUnit>,
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
@@ -193,8 +207,22 @@ fn draw_selected_unit_sensor_cone(
         ),
         With<Soldier>,
     >,
-    mut gizmos: Gizmos,
+    mut cache: ResMut<CachedSensorCone>,
 ) {
+    // Simulation state changes at 20Hz, so do the expensive terrain LoS work
+    // once after each tick. Selection/map/control changes also invalidate the cache.
+    if !clock.is_changed()
+        && !selected.is_changed()
+        && !map.is_changed()
+        && !control.is_changed()
+        && !knowledge.is_changed()
+    {
+        return;
+    }
+
+    cache.origin = None;
+    cache.endpoints.clear();
+
     let Some(entity) = selected.entity else {
         return;
     };
@@ -216,40 +244,43 @@ fn draw_selected_unit_sensor_cone(
 
     let origin_m = position.0;
     let half_fov = sensor.fov_radians / 2.0;
-    let color = Color::srgba(0.45, 0.85, 1.0, 0.35);
-
     let left_angle = *heading - half_fov;
     let right_angle = *heading + half_fov;
-    let origin = origin_m.map(meters);
-    let mut previous = None;
-    let mut left_endpoint = None;
 
+    cache.origin = Some(origin_m.map(meters));
+    cache.endpoints.reserve(SENSOR_CONE_SEGMENTS + 1);
     for segment in 0..=SENSOR_CONE_SEGMENTS {
         let t = segment as f32 / SENSOR_CONE_SEGMENTS as f32;
         let angle = left_angle.lerp(right_angle, t);
-        let endpoint =
-            visible_sensor_endpoint(&map, origin_m, angle, sensor.range_m, eye_height.height_m);
+        cache.endpoints.push(visible_sensor_endpoint(
+            &map,
+            origin_m,
+            angle,
+            sensor.range_m,
+            eye_height.height_m,
+        ));
+    }
+}
 
-        if segment == 0 {
-            left_endpoint = Some(endpoint);
-        }
+fn draw_selected_unit_sensor_cone(cache: Res<CachedSensorCone>, mut gizmos: Gizmos) {
+    let Some(origin) = cache.origin else {
+        return;
+    };
+    let Some(left_endpoint) = cache.endpoints.first().copied() else {
+        return;
+    };
+    let right_endpoint = *cache.endpoints.last().unwrap_or(&left_endpoint);
+    let color = Color::srgba(0.45, 0.85, 1.0, 0.35);
 
-        if let Some(previous) = previous {
-            gizmos.line_2d(previous, endpoint, color);
-        }
-        previous = Some(endpoint);
+    for endpoints in cache.endpoints.windows(2) {
+        gizmos.line_2d(endpoints[0], endpoints[1], color);
     }
 
-    if let Some(left_endpoint) = left_endpoint
-        && let Some(line_start) =
-            point_from_circle_border(origin, left_endpoint, UNIT_OVERLAY_RADIUS)
-    {
+    if let Some(line_start) = point_from_circle_border(origin, left_endpoint, UNIT_OVERLAY_RADIUS) {
         gizmos.line_2d(line_start, left_endpoint, color);
     }
 
-    if let Some(right_endpoint) = previous
-        && let Some(line_start) =
-            point_from_circle_border(origin, right_endpoint, UNIT_OVERLAY_RADIUS)
+    if let Some(line_start) = point_from_circle_border(origin, right_endpoint, UNIT_OVERLAY_RADIUS)
     {
         gizmos.line_2d(line_start, right_endpoint, color);
     }

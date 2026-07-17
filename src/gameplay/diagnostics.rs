@@ -2,6 +2,7 @@
 
 use crate::GameState;
 use crate::gameplay::simulation::{SimulationSet, simulation_running};
+use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use std::time::Instant;
 
@@ -29,42 +30,44 @@ pub struct GameplayDiagnosticsPlugin;
 
 impl Plugin for GameplayDiagnosticsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SimulationPerf>().add_systems(
-            FixedUpdate,
-            (
-                begin_simulation_tick.before(SimulationSet::Clock),
-                phase_boundary(0)
-                    .after(SimulationSet::Clock)
-                    .before(SimulationSet::Orders),
-                phase_boundary(1)
-                    .after(SimulationSet::Orders)
-                    .before(SimulationSet::Movement),
-                phase_boundary(2)
-                    .after(SimulationSet::Movement)
-                    .before(SimulationSet::Sensors),
-                phase_boundary(3)
-                    .after(SimulationSet::Sensors)
-                    .before(SimulationSet::Comms),
-                phase_boundary(4)
-                    .after(SimulationSet::Comms)
-                    .before(SimulationSet::Reports),
-                phase_boundary(5)
-                    .after(SimulationSet::Reports)
-                    .before(SimulationSet::Thinking),
-                phase_boundary(6)
-                    .after(SimulationSet::Thinking)
-                    .before(SimulationSet::Combat),
-                phase_boundary(7)
-                    .after(SimulationSet::Combat)
-                    .before(SimulationSet::Objectives),
-                phase_boundary(8)
-                    .after(SimulationSet::Objectives)
-                    .before(SimulationSet::Cleanup),
-                end_simulation_tick.after(SimulationSet::Cleanup),
-            )
-                .run_if(in_state(GameState::ScenarioScreen))
-                .run_if(simulation_running),
-        );
+        app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .init_resource::<SimulationPerf>()
+            .add_systems(
+                FixedUpdate,
+                (
+                    begin_simulation_tick.before(SimulationSet::Clock),
+                    phase_boundary(0)
+                        .after(SimulationSet::Clock)
+                        .before(SimulationSet::Orders),
+                    phase_boundary(1)
+                        .after(SimulationSet::Orders)
+                        .before(SimulationSet::Movement),
+                    phase_boundary(2)
+                        .after(SimulationSet::Movement)
+                        .before(SimulationSet::Sensors),
+                    phase_boundary(3)
+                        .after(SimulationSet::Sensors)
+                        .before(SimulationSet::Comms),
+                    phase_boundary(4)
+                        .after(SimulationSet::Comms)
+                        .before(SimulationSet::Reports),
+                    phase_boundary(5)
+                        .after(SimulationSet::Reports)
+                        .before(SimulationSet::Thinking),
+                    phase_boundary(6)
+                        .after(SimulationSet::Thinking)
+                        .before(SimulationSet::Combat),
+                    phase_boundary(7)
+                        .after(SimulationSet::Combat)
+                        .before(SimulationSet::Objectives),
+                    phase_boundary(8)
+                        .after(SimulationSet::Objectives)
+                        .before(SimulationSet::Cleanup),
+                    end_simulation_tick.after(SimulationSet::Cleanup),
+                )
+                    .run_if(in_state(GameState::ScenarioScreen))
+                    .run_if(simulation_running),
+            );
     }
 }
 
