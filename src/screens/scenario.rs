@@ -37,6 +37,7 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::picking::events::{Click, Pointer};
 use bevy::prelude::*;
 use bevy::text::{EditableText, TextCursorStyle};
+use bevy::ui::Checked;
 use bevy::ui_widgets::{Activate, Button, ValueChange, observe};
 use std::collections::HashMap;
 
@@ -229,7 +230,8 @@ impl Plugin for ScenarioScreenPlugin {
             .add_systems(
                 Update,
                 (
-                    update_menu_visibility,
+                    update_menu_visibility.after(toggle_mission_menu),
+                    toggle_mission_menu,
                     update_selected_unit_info_panel,
                     update_selected_unit_debug_chrome,
                     update_selected_unit_trace,
@@ -339,6 +341,33 @@ fn handle_scenario_menu_toggle_change(
 ) {
     if let Ok(toggle) = toggles.get(value_change.source) {
         menu_state.set(toggle.id, value_change.value);
+    }
+}
+
+/// Toggles the mission menu and keeps its sidebar checkbox in sync.
+fn toggle_mission_menu(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut menu_state: ResMut<MenuState>,
+    toggles: Query<(Entity, &ScenarioMenuToggle, Has<Checked>)>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyM) {
+        return;
+    }
+
+    let is_open = !menu_state.is_open(MenuId::Mission);
+    menu_state.set(MenuId::Mission, is_open);
+
+    for (entity, toggle, is_checked) in &toggles {
+        if toggle.id != MenuId::Mission || is_checked == is_open {
+            continue;
+        }
+
+        if is_open {
+            commands.entity(entity).insert(Checked);
+        } else {
+            commands.entity(entity).remove::<Checked>();
+        }
     }
 }
 
