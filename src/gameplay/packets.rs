@@ -6,7 +6,10 @@ use crate::ai::perception::ContactType;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::comms::{CommsGraph, update_comms_graph};
-use crate::gameplay::missions::{AssignedMission, MissionAssignmentMessage};
+use crate::gameplay::missions::{
+    AssignedMission, AssignedTask, MissionAssignmentMessage, TaskAssignmentMessage,
+    should_install_task_assignment,
+};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
 use crate::intel::ReportedLifeStatus;
@@ -28,6 +31,7 @@ impl Plugin for PacketsPlugin {
                 relay_packets,
                 apply_order_commands,
                 apply_mission_assignments,
+                apply_task_assignments,
             )
                 .chain()
                 .in_set(SimulationSet::Comms)
@@ -86,6 +90,7 @@ pub enum PacketPayload {
     StatusReport(StatusClaim),
     OrderCommand(OrderCommand),
     MissionAssignment(MissionAssignmentMessage),
+    TaskAssignment(TaskAssignmentMessage),
 }
 
 /// Player-authored micro-order carried through the packet substrate.
@@ -350,6 +355,52 @@ fn apply_mission_assignments(
     }
 }
 
+/// Consume subordinate task directives addressed to this unit. Like mission
+/// assignments, these become planner inputs and never concrete orders.
+fn apply_task_assignments(
+    mut commands: Commands,
+    clock: Res<SimulationClock>,
+    command_forest: Res<CommandForest>,
+    mut units: Query<(Entity, &mut Inbox, Option<&AssignedTask>), (With<Soldier>, With<Alive>)>,
+) {
+    for (entity, mut inbox, current) in &mut units {
+        let mut retained = Vec::with_capacity(inbox.packets.len());
+        let mut newest_issued_tick = current.map(|assignment| assignment.issued_tick);
+
+        for entry in inbox.packets.drain(..) {
+            let is_task_for_me = matches!(entry.packet.address, Address::Direct(target) if target == entity)
+                && matches!(&entry.packet.payload, PacketPayload::TaskAssignment(_));
+            if !is_task_for_me {
+                retained.push(entry);
+                continue;
+            }
+
+            let PacketPayload::TaskAssignment(message) = entry.packet.payload else {
+                unreachable!("payload was checked above");
+            };
+            let valid = command_forest.can_command(entry.packet.origin, entity)
+                && message.directive.validate().is_ok()
+                && message
+                    .directive
+                    .expires_at()
+                    .is_none_or(|expires_at| expires_at > clock.tick)
+                && should_install_task_assignment(newest_issued_tick, &message);
+            if !valid {
+                continue;
+            }
+
+            newest_issued_tick = Some(message.issued_tick);
+            commands.entity(entity).insert(AssignedTask {
+                directive: message.directive,
+                assigned_by: entry.packet.origin,
+                issued_tick: message.issued_tick,
+                received_tick: clock.tick,
+            });
+        }
+        inbox.packets = retained;
+    }
+}
+
 /// Consume order-command packets addressed to this unit.
 ///
 /// For now these represent only the player micro path: the packet origin must
@@ -407,6 +458,7 @@ mod tests {
     use super::*;
     use crate::actors::units::{Dead, Rank, Role};
     use crate::gameplay::comms::{CommsKind, CommsLink, CommsLinks};
+    use crate::gameplay::missions::{MissionId, TaskDirective};
     use bevy::ecs::system::RunSystemOnce;
     use std::collections::{HashMap, HashSet};
 
@@ -1108,6 +1160,129 @@ mod tests {
         run_packet_command_tick(&mut world);
 
         assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
+    }
+
+    #[test]
+    fn valid_task_packet_installs_planner_input_without_concrete_orders() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock {
+            tick: 10,
+            ..default()
+        });
+        let leader = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        insert_command_forest(&mut world, leader, subordinate);
+        let directive = TaskDirective::HoldStation {
+            mission_id: MissionId(2),
+            station_m: Vec2::new(4.0, 5.0),
+            facing_radians: None,
+            rally_point_m: Vec2::ZERO,
+            expires_at: Some(20),
+        };
+        world
+            .get_mut::<Inbox>(subordinate)
+            .unwrap()
+            .packets
+            .push(InboxEntry {
+                packet: InfoPacket {
+                    id: PacketId(9),
+                    origin: leader,
+                    address: Address::Direct(subordinate),
+                    created_tick: 9,
+                    payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                        directive,
+                        issued_tick: 9,
+                    }),
+                },
+                fresh: false,
+            });
+
+        world.run_system_once(apply_task_assignments).unwrap();
+        world.flush();
+
+        let assigned = world.get::<AssignedTask>(subordinate).unwrap();
+        assert_eq!(assigned.directive, directive);
+        assert_eq!(assigned.assigned_by, leader);
+        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<CombatOrder>(subordinate).is_none());
+        assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
+    }
+
+    #[test]
+    fn unauthorized_and_stale_task_packets_are_consumed_and_ignored() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock {
+            tick: 10,
+            ..default()
+        });
+        let leader = spawn_packet_soldier(&mut world, true);
+        let impostor = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        insert_command_forest(&mut world, leader, subordinate);
+        let directive = TaskDirective::HoldStation {
+            mission_id: MissionId(2),
+            station_m: Vec2::X,
+            facing_radians: None,
+            rally_point_m: Vec2::ZERO,
+            expires_at: None,
+        };
+        world.entity_mut(subordinate).insert(AssignedTask {
+            directive,
+            assigned_by: leader,
+            issued_tick: 8,
+            received_tick: 8,
+        });
+        for (id, origin, issued_tick) in [(1, leader, 7), (2, impostor, 9)] {
+            world
+                .get_mut::<Inbox>(subordinate)
+                .unwrap()
+                .packets
+                .push(InboxEntry {
+                    packet: InfoPacket {
+                        id: PacketId(id),
+                        origin,
+                        address: Address::Direct(subordinate),
+                        created_tick: 9,
+                        payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                            directive,
+                            issued_tick,
+                        }),
+                    },
+                    fresh: false,
+                });
+        }
+        world
+            .get_mut::<Inbox>(subordinate)
+            .unwrap()
+            .packets
+            .push(InboxEntry {
+                packet: InfoPacket {
+                    id: PacketId(3),
+                    origin: leader,
+                    address: Address::Direct(subordinate),
+                    created_tick: 9,
+                    payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                        directive: TaskDirective::HoldStation {
+                            mission_id: MissionId(2),
+                            station_m: Vec2::X,
+                            facing_radians: None,
+                            rally_point_m: Vec2::ZERO,
+                            expires_at: Some(10),
+                        },
+                        issued_tick: 10,
+                    }),
+                },
+                fresh: false,
+            });
+
+        world.run_system_once(apply_task_assignments).unwrap();
+        world.flush();
+
+        assert_eq!(
+            world.get::<AssignedTask>(subordinate).unwrap().issued_tick,
+            8
+        );
         assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
     }
 

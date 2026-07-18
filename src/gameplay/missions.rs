@@ -4,7 +4,7 @@ use crate::GameState;
 use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::packets::{Address, Outbox, PacketIdAllocator, PacketPayload, SeenPackets};
-use crate::gameplay::simulation::SimulationClock;
+use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use bevy::prelude::*;
 
 /// Tactical missions are persistent intent-bearing plans created during a
@@ -23,6 +23,13 @@ impl Plugin for MissionsPlugin {
             .add_systems(
                 Update,
                 apply_mission_assignment_requests.run_if(in_state(GameState::ScenarioScreen)),
+            )
+            .add_systems(
+                FixedUpdate,
+                transmit_pending_task_assignments
+                    .in_set(SimulationSet::Thinking)
+                    .before(crate::ai::htn::synthesis::synthesize_beliefs)
+                    .run_if(in_state(GameState::ScenarioScreen)),
             );
     }
 }
@@ -58,7 +65,7 @@ fn reset_mission_id_allocator(mut allocator: ResMut<MissionIdAllocator>) {
 
 /// Geometry defining where a tactical mission is to be executed. All positions
 /// are in meters, not Bevy render units.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MissionArea {
     Line { from_m: Vec2, to_m: Vec2 },
     Point { center_m: Vec2 },
@@ -254,6 +261,109 @@ pub struct MissionAssignmentRequested {
     pub assignee: Entity,
 }
 
+/// A subordinate planning directive. Like a mission, this is an HTN input and
+/// never a concrete movement/combat order.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TaskDirective {
+    HoldStation {
+        mission_id: MissionId,
+        station_m: Vec2,
+        facing_radians: Option<f32>,
+        rally_point_m: Vec2,
+        expires_at: Option<u64>,
+    },
+}
+
+impl TaskDirective {
+    pub fn validate(self) -> Result<(), TaskValidationError> {
+        match self {
+            Self::HoldStation {
+                station_m,
+                facing_radians,
+                rally_point_m,
+                ..
+            } => {
+                if !station_m.is_finite() {
+                    return Err(TaskValidationError::NonFinitePoint("hold station"));
+                }
+                if !rally_point_m.is_finite() {
+                    return Err(TaskValidationError::NonFinitePoint("task rally point"));
+                }
+                if facing_radians.is_some_and(|facing| !facing.is_finite()) {
+                    return Err(TaskValidationError::NonFiniteFacing);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn mission_id(self) -> MissionId {
+        match self {
+            Self::HoldStation { mission_id, .. } => mission_id,
+        }
+    }
+
+    pub fn expires_at(self) -> Option<u64> {
+        match self {
+            Self::HoldStation { expires_at, .. } => expires_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskValidationError {
+    NonFinitePoint(&'static str),
+    NonFiniteFacing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TaskAssignmentMessage {
+    pub directive: TaskDirective,
+    pub issued_tick: u64,
+}
+
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct AssignedTask {
+    pub directive: TaskDirective,
+    pub assigned_by: Entity,
+    pub issued_tick: u64,
+    pub received_tick: u64,
+}
+
+pub fn should_install_task_assignment(
+    current_issued_tick: Option<u64>,
+    incoming: &TaskAssignmentMessage,
+) -> bool {
+    current_issued_tick.is_none_or(|current| incoming.issued_tick > current)
+}
+
+/// Intent emitted by a leader HTN operator and accepted by the communications
+/// bridge on the following simulation pass.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct PendingTaskAssignment {
+    pub mission_issued_tick: u64,
+    pub assignee: Entity,
+    pub directive: TaskDirective,
+}
+
+/// Durable memory of delegation side effects. It prevents replanning from
+/// retransmitting the same subordinate task every tick.
+#[derive(Component, Debug, Default, Clone, PartialEq, Eq)]
+pub struct MissionDelegationProgress {
+    pub mission: Option<(MissionId, u64)>,
+    pub delegated_to: Vec<Entity>,
+}
+
+impl MissionDelegationProgress {
+    pub fn reset_for(&mut self, mission_id: MissionId, issued_tick: u64) {
+        let identity = (mission_id, issued_tick);
+        if self.mission != Some(identity) {
+            self.mission = Some(identity);
+            self.delegated_to.clear();
+        }
+    }
+}
+
 fn apply_mission_assignment_requests(
     mut commands: Commands,
     mut requests: MessageReader<MissionAssignmentRequested>,
@@ -323,6 +433,62 @@ fn apply_mission_assignment_requests(
             );
         }
         assignees.assignees.push(request.assignee);
+    }
+}
+
+fn transmit_pending_task_assignments(
+    mut commands: Commands,
+    clock: Res<SimulationClock>,
+    command_forest: Res<CommandForest>,
+    mut packet_ids: ResMut<PacketIdAllocator>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    mut leaders: Query<(
+        Entity,
+        &PendingTaskAssignment,
+        &mut MissionDelegationProgress,
+        &mut Outbox,
+        &mut SeenPackets,
+    )>,
+) {
+    for (leader, pending, mut progress, mut outbox, mut seen) in &mut leaders {
+        let mission_id = pending.directive.mission_id();
+        progress.reset_for(mission_id, pending.mission_issued_tick);
+
+        if !progress.delegated_to.contains(&pending.assignee) {
+            if pending.assignee == leader {
+                commands.entity(leader).insert(AssignedTask {
+                    directive: pending.directive,
+                    assigned_by: leader,
+                    issued_tick: clock.tick,
+                    received_tick: clock.tick,
+                });
+            } else if living_soldiers.get(pending.assignee).is_ok()
+                && command_forest.can_command(leader, pending.assignee)
+            {
+                outbox.send(
+                    &mut seen,
+                    &mut packet_ids,
+                    leader,
+                    Address::Direct(pending.assignee),
+                    clock.tick,
+                    PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                        directive: pending.directive,
+                        issued_tick: clock.tick,
+                    }),
+                );
+            } else {
+                warn!(
+                    ?leader,
+                    assignee = ?pending.assignee,
+                    "task delegation skipped: recipient is dead or unauthorized"
+                );
+            }
+
+            // A dead/removed subordinate is also considered processed so the
+            // leader can continue decomposing the rest of the mission.
+            progress.delegated_to.push(pending.assignee);
+        }
+        commands.entity(leader).remove::<PendingTaskAssignment>();
     }
 }
 
@@ -398,6 +564,8 @@ fn validate_finite_point(field: &'static str, point: Vec2) -> Result<(), Mission
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::units::{Rank, Role};
+    use bevy::ecs::system::RunSystemOnce;
 
     fn hold_line() -> MissionPlan {
         MissionPlan {
@@ -540,6 +708,94 @@ mod tests {
                 mission: current.mission.clone(),
                 issued_tick: 10,
             }
+        ));
+    }
+
+    #[test]
+    fn task_validation_rejects_non_finite_directive_fields() {
+        let invalid_station = TaskDirective::HoldStation {
+            mission_id: MissionId(1),
+            station_m: Vec2::new(f32::NAN, 0.0),
+            facing_radians: None,
+            rally_point_m: Vec2::ZERO,
+            expires_at: None,
+        };
+        assert_eq!(
+            invalid_station.validate(),
+            Err(TaskValidationError::NonFinitePoint("hold station"))
+        );
+
+        let invalid_facing = TaskDirective::HoldStation {
+            mission_id: MissionId(1),
+            station_m: Vec2::ZERO,
+            facing_radians: Some(f32::INFINITY),
+            rally_point_m: Vec2::ZERO,
+            expires_at: None,
+        };
+        assert_eq!(
+            invalid_facing.validate(),
+            Err(TaskValidationError::NonFiniteFacing)
+        );
+    }
+
+    #[test]
+    fn delegation_bridge_sends_task_and_records_progress() {
+        let mut world = World::new();
+        world.init_resource::<SimulationClock>();
+        world.init_resource::<PacketIdAllocator>();
+        let subordinate = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let directive = TaskDirective::HoldStation {
+            mission_id: MissionId(7),
+            station_m: Vec2::X,
+            facing_radians: None,
+            rally_point_m: Vec2::NEG_Y,
+            expires_at: None,
+        };
+        let leader = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Sergeant,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                PendingTaskAssignment {
+                    mission_issued_tick: 3,
+                    assignee: subordinate,
+                    directive,
+                },
+                MissionDelegationProgress::default(),
+                Outbox::default(),
+                SeenPackets::default(),
+            ))
+            .id();
+        let mut forest = CommandForest::default();
+        forest.set_superior(subordinate, Some(leader)).unwrap();
+        world.insert_resource(forest);
+
+        world
+            .run_system_once(transmit_pending_task_assignments)
+            .unwrap();
+        world.flush();
+
+        let progress = world.get::<MissionDelegationProgress>(leader).unwrap();
+        assert_eq!(progress.mission, Some((MissionId(7), 3)));
+        assert_eq!(progress.delegated_to, vec![subordinate]);
+        assert!(world.get::<PendingTaskAssignment>(leader).is_none());
+        let outbox = world.get::<Outbox>(leader).unwrap();
+        assert!(matches!(
+            outbox.packets[0].payload,
+            PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                directive: sent,
+                ..
+            }) if sent == directive
         ));
     }
 

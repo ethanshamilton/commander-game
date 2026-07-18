@@ -1,8 +1,16 @@
 use super::executor::{Autonomous, RecentResolvedShots};
-use super::state::{HostileBelief, PlannerState};
+use super::leader::decompose_hold_line;
+use super::state::{
+    AssignedMissionBelief, AssignedTaskBelief, AssignedTaskKind, HostileBelief, PlannerState,
+};
 use crate::actors::units::{Alive, Health, Inventory, Soldier};
 use crate::ai::perception::{AuditorySensor, Contact, ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::combat::ResolvedShot;
+use crate::gameplay::command::CommandForest;
+use crate::gameplay::missions::{
+    AssignedMission, AssignedTask, MissionArea, MissionDelegationProgress, MissionKind,
+    TaskDirective,
+};
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
 use crate::gameplay::spatial::BattlefieldPosition;
 use crate::intel::ReportedLifeStatus;
@@ -14,6 +22,7 @@ use std::cmp::Ordering;
 /// shot impacts supplied to synthesis.
 const UNDER_FIRE_CONTACT_MAX_STALENESS_TICKS: u64 = 20;
 const UNDER_FIRE_CONTACT_DISTANCE_M: f32 = 80.0;
+pub const STATION_ARRIVAL_EPSILON_M: f32 = 0.25;
 
 /// Per-unit planning snapshot, refreshed once per tick before Thinking systems run.
 /// This is the unit's belief state — the single input to deliberation, step
@@ -26,21 +35,40 @@ pub struct PlannerBelief {
 pub fn synthesize_beliefs(
     clock: Res<SimulationClock>,
     recent_shots: Res<RecentResolvedShots>,
+    command_forest: Option<Res<CommandForest>>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut units: Query<
         (
+            Entity,
             &BattlefieldPosition,
             &Health,
             &Inventory,
             &PerceptionMemory,
             Option<&AuditorySensor>,
             Option<&UnitOrder>,
+            Option<&AssignedMission>,
+            Option<&AssignedTask>,
+            Option<&MissionDelegationProgress>,
             &mut PlannerBelief,
         ),
         (With<Soldier>, With<Alive>, With<Autonomous>),
     >,
 ) {
-    for (position, health, inventory, memory, auditory, order, mut belief) in &mut units {
-        belief.state = synthesize_planner_state(
+    for (
+        entity,
+        position,
+        health,
+        inventory,
+        memory,
+        auditory,
+        order,
+        assigned_mission,
+        assigned_task,
+        delegation_progress,
+        mut belief,
+    ) in &mut units
+    {
+        let mut state = synthesize_planner_state(
             &clock,
             position,
             health,
@@ -50,7 +78,102 @@ pub fn synthesize_beliefs(
             order,
             &recent_shots.shots,
         );
+        project_task_belief(&mut state, assigned_task);
+        if let Some(command_forest) = command_forest.as_deref() {
+            project_mission_belief(
+                &mut state,
+                entity,
+                assigned_mission,
+                delegation_progress,
+                command_forest,
+                &living_soldiers,
+            );
+        }
+        belief.state = state;
     }
+}
+
+fn project_task_belief(state: &mut PlannerState, assigned: Option<&AssignedTask>) {
+    let Some(assigned) = assigned else {
+        return;
+    };
+
+    match assigned.directive {
+        TaskDirective::HoldStation {
+            mission_id,
+            station_m,
+            rally_point_m,
+            expires_at,
+            ..
+        } => {
+            state.assigned_task = Some(AssignedTaskBelief {
+                mission_id,
+                issued_tick: assigned.issued_tick,
+                kind: AssignedTaskKind::HoldStation,
+                station_m,
+                rally_point_m,
+                expires_at,
+            });
+            state.at_assigned_station =
+                state.position_m.distance(station_m) <= STATION_ARRIVAL_EPSILON_M;
+        }
+    }
+}
+
+fn project_mission_belief(
+    state: &mut PlannerState,
+    entity: Entity,
+    assigned: Option<&AssignedMission>,
+    progress: Option<&MissionDelegationProgress>,
+    command_forest: &CommandForest,
+    living_soldiers: &Query<(), (With<Soldier>, With<Alive>)>,
+) {
+    let Some(assigned) = assigned else {
+        return;
+    };
+
+    let mission = AssignedMissionBelief {
+        id: assigned.mission.id,
+        issued_tick: assigned.issued_tick,
+        kind: assigned.mission.kind,
+        area: assigned.mission.area,
+        rally_point_m: assigned.mission.rally_point_m,
+        expires_at: assigned.mission.expires_at,
+    };
+    state.assigned_mission = Some(mission);
+    state.has_command_responsibility = true;
+
+    if mission.kind != MissionKind::HoldLine || state.mission_is_expired() {
+        return;
+    }
+    let MissionArea::Line { from_m, to_m } = mission.area else {
+        return;
+    };
+
+    let subordinates: Vec<_> = command_forest
+        .subordinates_of(entity)
+        .iter()
+        .copied()
+        .filter(|subordinate| living_soldiers.get(*subordinate).is_ok())
+        .collect();
+    let assignments = decompose_hold_line(from_m, to_m, entity, &subordinates);
+    let delegated = progress
+        .filter(|progress| progress.mission == Some(mission.identity()))
+        .map(|progress| progress.delegated_to.as_slice())
+        .unwrap_or(&[]);
+
+    state.delegated_assignees = delegated.to_vec();
+    state.own_mission_station_m = assignments
+        .iter()
+        .find(|assignment| assignment.assignee == entity)
+        .map(|assignment| assignment.station_m);
+    state.at_own_mission_station = state
+        .own_mission_station_m
+        .is_some_and(|station| state.position_m.distance(station) <= STATION_ARRIVAL_EPSILON_M);
+    state.next_hold_station = assignments.iter().copied().find(|assignment| {
+        assignment.assignee != entity && !delegated.contains(&assignment.assignee)
+    });
+    state.mission_delegation_complete = state.next_hold_station.is_none();
 }
 
 pub fn synthesize_planner_state(
@@ -75,6 +198,7 @@ pub fn synthesize_planner_state(
         under_fire,
         has_move_target: matches!(current_order, Some(UnitOrder::MoveTo { .. })),
         tick: clock.tick,
+        ..Default::default()
     }
 }
 
@@ -490,6 +614,36 @@ mod tests {
         assert!(under_fire_from_contacts(100, Vec2::ZERO, &fresh_near));
         assert!(!under_fire_from_contacts(100, Vec2::ZERO, &stale));
         assert!(!under_fire_from_contacts(100, Vec2::ZERO, &far));
+    }
+
+    #[test]
+    fn assigned_hold_station_projects_distance_and_expiry_facts() {
+        let assigned = AssignedTask {
+            directive: TaskDirective::HoldStation {
+                mission_id: crate::gameplay::missions::MissionId(4),
+                station_m: Vec2::new(5.0, 0.0),
+                facing_radians: None,
+                rally_point_m: Vec2::ZERO,
+                expires_at: Some(12),
+            },
+            assigned_by: Entity::PLACEHOLDER,
+            issued_tick: 9,
+            received_tick: 9,
+        };
+        let mut state = PlannerState {
+            position_m: Vec2::new(5.1, 0.0),
+            tick: 10,
+            ..Default::default()
+        };
+
+        project_task_belief(&mut state, Some(&assigned));
+
+        assert!(state.at_assigned_station);
+        assert!(!state.assigned_task_is_expired());
+        assert_eq!(state.assigned_task.unwrap().issued_tick, 9);
+
+        state.tick = 12;
+        assert!(state.assigned_task_is_expired());
     }
 
     #[test]

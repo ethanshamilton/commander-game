@@ -1,6 +1,7 @@
 use super::state::PlannerState;
 use crate::ai::perception::ContactKind;
 use crate::gameplay::combat::CombatOrder;
+use crate::gameplay::missions::{MissionId, PendingTaskAssignment, TaskDirective};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::UnitOrder;
 use bevy::prelude::*;
@@ -13,8 +14,20 @@ const MOVE_DESTINATION_EPSILON_M: f32 = 0.05;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BoundOperator {
     Hold,
-    MoveTo { destination_m: Vec2 },
-    FireAt { target: Entity },
+    MoveTo {
+        destination_m: Vec2,
+    },
+    FireAt {
+        target: Entity,
+    },
+    DelegateHoldStation {
+        mission_id: MissionId,
+        mission_issued_tick: u64,
+        assignee: Entity,
+        station_m: Vec2,
+        rally_point_m: Vec2,
+        expires_at: Option<u64>,
+    },
 }
 
 /// Outcome of polling a running step's operator against current belief/order
@@ -35,6 +48,14 @@ impl BoundOperator {
                 format!("move to ({:.1}, {:.1})m", destination_m.x, destination_m.y)
             }
             BoundOperator::FireAt { target } => format!("fire at {target:?}"),
+            BoundOperator::DelegateHoldStation {
+                assignee,
+                station_m,
+                ..
+            } => format!(
+                "delegate hold station ({:.1}, {:.1})m to {assignee:?}",
+                station_m.x, station_m.y
+            ),
         }
     }
 
@@ -60,6 +81,26 @@ impl BoundOperator {
                     .entity(entity)
                     .insert((CombatOrder::FireAt { target }, CombatOrderSource::htn()));
             }
+            BoundOperator::DelegateHoldStation {
+                mission_id,
+                mission_issued_tick,
+                assignee,
+                station_m,
+                rally_point_m,
+                expires_at,
+            } => {
+                commands.entity(entity).insert(PendingTaskAssignment {
+                    mission_issued_tick,
+                    assignee,
+                    directive: TaskDirective::HoldStation {
+                        mission_id,
+                        station_m,
+                        facing_radians: None,
+                        rally_point_m,
+                        expires_at,
+                    },
+                });
+            }
         }
     }
 
@@ -74,6 +115,23 @@ impl BoundOperator {
             BoundOperator::Hold => StepPoll::Running,
             BoundOperator::MoveTo { destination_m } => poll_move(destination_m, unit_order),
             BoundOperator::FireAt { target } => poll_fire(target, combat_order, state),
+            BoundOperator::DelegateHoldStation {
+                mission_id,
+                mission_issued_tick,
+                assignee,
+                ..
+            } => {
+                if state.has_delegated_to((mission_id, mission_issued_tick), assignee) {
+                    StepPoll::Succeeded
+                } else if state
+                    .assigned_mission
+                    .is_none_or(|mission| mission.identity() != (mission_id, mission_issued_tick))
+                {
+                    StepPoll::Failed("assigned mission changed during delegation")
+                } else {
+                    StepPoll::Running
+                }
+            }
         }
     }
 }

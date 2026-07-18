@@ -14,8 +14,13 @@ around it, so the decomposition logic is unit-testable without spinning up an
   primitive tasks that bind to a `BoundOperator` at plan time. `bind_*` helper
   fns (e.g. `bind_fire_at_nearest_hostile`) live here — they're the glue
   between doctrine-level task names and concrete parameters.
+- **`soldier.rs` / `leader.rs`** — composable task installers and the infantry
+  domain builder. Every infantry unit has the same behavioral repertoire;
+  leadership methods become applicable only when planner state contains current
+  command responsibility and an assigned mission. Leadership is therefore a
+  transient role rather than a rank-selected domain.
 - **`operators.rs`** — `BoundOperator` (the concrete, parameterized action a
-  primitive task resolves to: `Hold`/`MoveTo`/`FireAt`) plus its `dispatch()`
+  primitive task resolves to: `Hold`/`MoveTo`/`FireAt`/delegation) plus its `dispatch()`
   (turn the operator into `UnitOrder`/`CombatOrder` insertions, tagged
   `OrderSource::Htn`) and `poll()` (has the running step finished, failed, or
   is it still in flight). This is the one file that knows how operators talk

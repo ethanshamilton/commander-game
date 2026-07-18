@@ -32,3 +32,23 @@ Recipients validate the packet origin and mission snapshot again. A valid,
 unexpired assignment becomes an HTN input only; it never directly writes a
 concrete order. One active assignment is supported per recipient: a greater
 `issued_tick` supersedes it, while equal or older packets are ignored.
+
+## Leader decomposition
+
+All infantry use one domain containing both ordinary soldier and conditional
+leadership behavior. An assigned Hold Line mission activates command behavior
+for its current coordinator. The coordinator and all living direct command
+members are jointly assigned evenly spaced formation stations; the coordinator
+receives a central slot and delegates the other slots one per planning cycle.
+`MissionDelegationProgress` records assignments accepted for transmission so
+replanning is idempotent. The HTN emits `PendingTaskAssignment`; a gameplay
+bridge turns it into `PacketPayload::TaskAssignment` without writing concrete
+orders. After delegation, the coordinator moves to and holds its own station.
+Coordinator is a transient command relationship, not a rank-specific domain.
+
+Recipients validate task authority, geometry, expiry, and `issued_tick` before
+installing `AssignedTask`. Soldier and squad-leader HTN domains share assigned-
+task behavior: units move to their station with an HTN-sourced `UnitOrder`, then
+hold there. Survival and fresh-contact engagement remain higher priorities;
+displacement or task replacement invalidates the running task step and causes
+replanning. Expiry fallback to the rally point is implemented separately.

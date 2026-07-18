@@ -354,6 +354,24 @@ pub fn advance_plan_execution(
         }
 
         let step = &runner.plan.steps[runner.current];
+        if !(step.preconditions)(&belief.state)
+            && !matches!(step.operator, BoundOperator::DelegateHoldStation { .. })
+        {
+            trace_transition(
+                &mut trace,
+                trace_tick,
+                trace_elapsed_s,
+                TraceEvent::StepFailed {
+                    task: step.task_name,
+                    failed_condition: "precondition failed while running",
+                },
+            );
+            clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+            clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
+            commands.entity(entity).remove::<PlanRunner>();
+            continue;
+        }
+
         let outcome = step
             .operator
             .poll(&belief.state, current_order, combat_order);
@@ -703,6 +721,7 @@ mod tests {
                         has_ammo: true,
                         under_fire: false,
                         has_move_target: false,
+                        ..Default::default()
                     },
                 },
             ))
@@ -730,6 +749,49 @@ mod tests {
             app.world().get::<PlanRunner>(entity).unwrap().step_state,
             StepState::Running
         );
+    }
+
+    #[test]
+    fn running_step_stops_when_its_precondition_becomes_false() {
+        let mut builder = DomainBuilder::new();
+        let hold = builder.primitive("ConditionalHold", under_fire, bind_hold, no_effect);
+        let domain = builder.build(hold);
+        let initial = PlannerState {
+            under_fire: true,
+            ..Default::default()
+        };
+        let plan = plan(&domain, &initial).unwrap();
+        let mut app = App::new();
+        app.add_systems(Update, advance_plan_execution);
+        let entity = app
+            .world_mut()
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Autonomous,
+                DecisionTrace::default(),
+                PlannerBelief::default(),
+                UnitOrder::Hold,
+                UnitOrderSource::htn(),
+                CombatOrder::HoldFire,
+                CombatOrderSource::htn(),
+                PlanRunner {
+                    plan,
+                    current: 0,
+                    step_state: StepState::Running,
+                    last_state_digest: PlannerStateDigest::from_state(&initial),
+                },
+            ))
+            .id();
+
+        app.update();
+
+        assert!(app.world().get::<PlanRunner>(entity).is_none());
+        assert!(app.world().get::<UnitOrder>(entity).is_none());
+        assert!(app.world().get::<CombatOrder>(entity).is_none());
     }
 
     #[test]
@@ -784,6 +846,7 @@ mod tests {
                     has_ammo: true,
                     under_fire: false,
                     has_move_target: false,
+                    ..Default::default()
                 },
             },
         ));
@@ -850,6 +913,7 @@ mod tests {
                     has_ammo: true,
                     under_fire: true,
                     has_move_target: false,
+                    ..Default::default()
                 },
             },
         ));
@@ -939,6 +1003,7 @@ mod tests {
                         has_ammo: true,
                         under_fire: false,
                         has_move_target: false,
+                        ..Default::default()
                     },
                 },
             ))
@@ -1009,6 +1074,7 @@ mod tests {
                     has_ammo: true,
                     under_fire: false,
                     has_move_target: true,
+                    ..Default::default()
                 },
             },
         ));
@@ -1057,7 +1123,7 @@ mod tests {
             .insert_resource(HtnDomainRegistry {
                 domains: HashMap::from([(
                     DomainId::Soldier,
-                    super::super::soldier::build_soldier_domain(),
+                    super::super::leader::build_infantry_domain(),
                 )]),
             })
             .add_systems(
@@ -1153,6 +1219,7 @@ mod tests {
                     has_ammo: true,
                     under_fire: false,
                     has_move_target: true,
+                    ..Default::default()
                 },
             },
         ));
@@ -1258,6 +1325,7 @@ mod tests {
                     has_ammo: true,
                     under_fire: false,
                     has_move_target: false,
+                    ..Default::default()
                 },
             },
         ));

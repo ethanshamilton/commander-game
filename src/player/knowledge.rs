@@ -180,9 +180,9 @@ fn consume_player_report_packets(
                     last_reported_tick: clock.tick,
                 });
             }
-            PacketPayload::OrderCommand(_) | PacketPayload::MissionAssignment(_) => {
-                retained.push(entry)
-            }
+            PacketPayload::OrderCommand(_)
+            | PacketPayload::MissionAssignment(_)
+            | PacketPayload::TaskAssignment(_) => retained.push(entry),
         }
     }
 

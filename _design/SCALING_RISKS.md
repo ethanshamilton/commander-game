@@ -6,7 +6,7 @@ wall at ~300–500 units; memory growth degrades long sessions at *any* unit cou
 
 ## 1. Perception is the first hard wall
 
-- **1A: Pairwise perception is `O(N²)` with LOS raycast in the inner loop**
+- **MITIGATED--1A: Pairwise perception is `O(N²)` with LOS raycast in the inner loop**
   - `update_visual_perception` runs N observers × N targets, and each in-cone
     pair pays a terrain LOS walk of `distance/2` bilinear `height_at_m` samples
     (up to ~75 at max visual range). Auditory is another N² pass.

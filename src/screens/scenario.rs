@@ -17,7 +17,7 @@ use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::missions::MissionIdAllocator;
-use crate::gameplay::missions::{MissionPlan, TacticalMission};
+use crate::gameplay::missions::{MissionDelegationProgress, MissionPlan, TacticalMission};
 use crate::gameplay::objectives::{ScenarioObjectiveSet, ScenarioOutcome};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
@@ -1624,6 +1624,7 @@ pub fn spawn_soldier_at(
         .insert((
             DecisionTrace::default(),
             PlannerBelief::default(),
+            MissionDelegationProgress::default(),
             DomainRef(DomainId::Soldier),
         ))
         .id();
