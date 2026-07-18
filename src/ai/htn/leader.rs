@@ -11,6 +11,38 @@ pub struct LeadershipTasks {
     pub execute_mission: TaskId,
 }
 
+fn add_fallback_task(builder: &mut DomainBuilder) -> TaskId {
+    let move_to_fallback = builder.primitive_with_reason(
+        "MoveToFallbackPoint",
+        "assigned mission or task expired; regroup at the preplanned rally point",
+        fallback_needs_movement,
+        bind_move_to_fallback,
+        effect_arrive_at_fallback,
+    );
+    let hold_at_fallback = builder.primitive_with_reason(
+        "HoldAtFallbackPoint",
+        "rally point reached after assignment expiry",
+        at_active_fallback,
+        bind_hold,
+        super::domain::no_effect,
+    );
+    builder.compound(
+        "ExecuteFallback",
+        vec![
+            Method {
+                name: "MoveToFallback",
+                preconditions: fallback_needs_movement,
+                subtasks: vec![move_to_fallback],
+            },
+            Method {
+                name: "HoldAtFallback",
+                preconditions: at_active_fallback,
+                subtasks: vec![hold_at_fallback],
+            },
+        ],
+    )
+}
+
 pub fn add_leadership_tasks(builder: &mut DomainBuilder) -> LeadershipTasks {
     let delegate = builder.primitive_with_reason(
         "DelegateHoldStation",
@@ -63,6 +95,7 @@ pub fn add_leadership_tasks(builder: &mut DomainBuilder) -> LeadershipTasks {
 pub fn build_infantry_domain() -> Domain {
     let mut builder = DomainBuilder::new();
     let soldier = add_soldier_tasks(&mut builder);
+    let fallback = add_fallback_task(&mut builder);
     let leadership = add_leadership_tasks(&mut builder);
 
     let root = builder.compound(
@@ -78,12 +111,10 @@ pub fn build_infantry_domain() -> Domain {
                 preconditions: fresh_visual_hostile_with_ammo,
                 subtasks: vec![soldier.fire],
             },
-            // Reserved at the intended priority for milestone G. Keeping it
-            // in this root now makes the leader doctrine order explicit.
             Method {
                 name: "ExecuteFallback",
-                preconditions: super::domain::never,
-                subtasks: vec![soldier.hold],
+                preconditions: fallback_active,
+                subtasks: vec![fallback],
             },
             Method {
                 name: "ExecuteAssignedTask",
@@ -109,6 +140,33 @@ pub fn build_infantry_domain() -> Domain {
     );
 
     builder.build(root)
+}
+
+fn fallback_active(state: &PlannerState) -> bool {
+    state.fallback_is_active()
+}
+
+fn fallback_needs_movement(state: &PlannerState) -> bool {
+    fallback_active(state) && !state.at_fallback_point
+}
+
+fn at_active_fallback(state: &PlannerState) -> bool {
+    fallback_active(state) && state.at_fallback_point
+}
+
+fn bind_move_to_fallback(state: &PlannerState) -> Option<BoundOperator> {
+    Some(BoundOperator::MoveTo {
+        destination_m: state.fallback_point_m?,
+    })
+}
+
+fn effect_arrive_at_fallback(state: &mut PlannerState) {
+    let Some(fallback_point_m) = state.fallback_point_m else {
+        return;
+    };
+    state.position_m = fallback_point_m;
+    state.at_fallback_point = true;
+    state.has_move_target = true;
 }
 
 fn active_hold_line_mission(state: &PlannerState) -> bool {
@@ -278,6 +336,33 @@ mod tests {
             planned.steps[0].operator,
             BoundOperator::DelegateHoldStation { assignee: target, .. } if target == assignee
         ));
+    }
+
+    #[test]
+    fn expired_assignment_moves_to_fallback_then_holds() {
+        let rally_point = Vec2::new(-5.0, 2.0);
+        let moving = PlannerState {
+            fallback_point_m: Some(rally_point),
+            ..Default::default()
+        };
+        let planned = plan(&build_infantry_domain(), &moving).unwrap();
+        assert_eq!(planned.mtr, Mtr(vec![2, 0]));
+        assert_eq!(
+            planned.steps[0].operator,
+            BoundOperator::MoveTo {
+                destination_m: rally_point
+            }
+        );
+
+        let arrived = PlannerState {
+            position_m: rally_point,
+            fallback_point_m: Some(rally_point),
+            at_fallback_point: true,
+            ..Default::default()
+        };
+        let planned = plan(&build_infantry_domain(), &arrived).unwrap();
+        assert_eq!(planned.mtr, Mtr(vec![2, 1]));
+        assert_eq!(planned.steps[0].operator, BoundOperator::Hold);
     }
 
     #[test]

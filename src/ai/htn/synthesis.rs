@@ -89,6 +89,7 @@ pub fn synthesize_beliefs(
                 &living_soldiers,
             );
         }
+        project_expiry_fallback(&mut state);
         belief.state = state;
     }
 }
@@ -118,6 +119,31 @@ fn project_task_belief(state: &mut PlannerState, assigned: Option<&AssignedTask>
                 state.position_m.distance(station_m) <= STATION_ARRIVAL_EPSILON_M;
         }
     }
+}
+
+fn project_expiry_fallback(state: &mut PlannerState) {
+    // Mission and task assignments live in separate ECS lanes. If both remain
+    // installed, the newest directive is the unit's current source of intent.
+    let fallback = match (state.assigned_mission, state.assigned_task) {
+        (Some(mission), Some(task)) if task.issued_tick > mission.issued_tick => {
+            task.expires_at.map(|expiry| (expiry, task.rally_point_m))
+        }
+        (Some(mission), _) => mission
+            .expires_at
+            .map(|expiry| (expiry, mission.rally_point_m)),
+        (None, Some(task)) => task.expires_at.map(|expiry| (expiry, task.rally_point_m)),
+        (None, None) => None,
+    };
+
+    let Some((expires_at, rally_point_m)) = fallback else {
+        return;
+    };
+    if state.tick < expires_at {
+        return;
+    }
+
+    state.fallback_point_m = Some(rally_point_m);
+    state.at_fallback_point = state.position_m.distance(rally_point_m) <= STATION_ARRIVAL_EPSILON_M;
 }
 
 fn project_mission_belief(
@@ -641,9 +667,47 @@ mod tests {
         assert!(state.at_assigned_station);
         assert!(!state.assigned_task_is_expired());
         assert_eq!(state.assigned_task.unwrap().issued_tick, 9);
+        project_expiry_fallback(&mut state);
+        assert_eq!(state.fallback_point_m, None);
 
         state.tick = 12;
         assert!(state.assigned_task_is_expired());
+        project_expiry_fallback(&mut state);
+        assert_eq!(state.fallback_point_m, Some(Vec2::ZERO));
+        assert!(!state.at_fallback_point);
+    }
+
+    #[test]
+    fn newer_assignment_controls_expiry_fallback() {
+        let mut state = PlannerState {
+            position_m: Vec2::new(10.0, 0.0),
+            tick: 20,
+            assigned_mission: Some(AssignedMissionBelief {
+                id: crate::gameplay::missions::MissionId(1),
+                issued_tick: 10,
+                kind: MissionKind::HoldLine,
+                area: MissionArea::Line {
+                    from_m: Vec2::ZERO,
+                    to_m: Vec2::X,
+                },
+                rally_point_m: Vec2::NEG_X,
+                expires_at: Some(15),
+            }),
+            assigned_task: Some(AssignedTaskBelief {
+                mission_id: crate::gameplay::missions::MissionId(2),
+                issued_tick: 11,
+                kind: AssignedTaskKind::HoldStation,
+                station_m: Vec2::X,
+                rally_point_m: Vec2::new(10.0, 0.0),
+                expires_at: Some(20),
+            }),
+            ..Default::default()
+        };
+
+        project_expiry_fallback(&mut state);
+
+        assert_eq!(state.fallback_point_m, Some(Vec2::new(10.0, 0.0)));
+        assert!(state.at_fallback_point);
     }
 
     #[test]

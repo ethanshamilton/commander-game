@@ -364,6 +364,10 @@ impl MissionDelegationProgress {
     }
 }
 
+fn mission_is_assignable(plan: &MissionPlan, tick: u64) -> bool {
+    plan.validate().is_ok() && plan.expires_at.is_none_or(|expires_at| expires_at > tick)
+}
+
 fn apply_mission_assignment_requests(
     mut commands: Commands,
     mut requests: MessageReader<MissionAssignmentRequested>,
@@ -380,7 +384,7 @@ fn apply_mission_assignment_requests(
             warn!(?request, "mission assignment rejected: unknown mission");
             continue;
         };
-        if plan.validate().is_err()
+        if !mission_is_assignable(plan, clock.tick)
             || soldiers.get(request.issuer).is_err()
             || soldiers.get(request.assignee).is_err()
             || !command_forest.can_command(request.issuer, request.assignee)
@@ -684,6 +688,18 @@ mod tests {
                 shape: "point",
             })
         );
+    }
+
+    #[test]
+    fn mission_cannot_be_assigned_at_or_after_expiry() {
+        let plan = hold_line();
+        assert!(mission_is_assignable(&plan, 100));
+        assert!(!mission_is_assignable(&plan, 101));
+        assert!(!mission_is_assignable(&plan, 102));
+
+        let mut no_expiry = plan;
+        no_expiry.expires_at = None;
+        assert!(mission_is_assignable(&no_expiry, u64::MAX));
     }
 
     #[test]

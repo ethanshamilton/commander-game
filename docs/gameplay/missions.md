@@ -51,4 +51,16 @@ installing `AssignedTask`. Soldier and squad-leader HTN domains share assigned-
 task behavior: units move to their station with an HTN-sourced `UnitOrder`, then
 hold there. Survival and fresh-contact engagement remain higher priorities;
 displacement or task replacement invalidates the running task step and causes
-replanning. Expiry fallback to the rally point is implemented separately.
+replanning.
+
+## Expiration fallback
+
+At `tick >= expires_at`, normal mission/task execution stops and the assignment's
+rally point becomes the unit's fallback destination. The coordinator and every
+recipient therefore retain the fallback plan even without working comms. HTN
+moves each unit to the rally point and holds there; survival and fresh-contact
+engagement still outrank regrouping. Expired assignment components are retained
+for their rally data until a newer assignment supersedes them, while expired
+player-authored mission plans reject new assignment requests. If stale mission
+and task components coexist, the one with the newer `issued_tick` controls the
+fallback.

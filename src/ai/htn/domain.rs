@@ -169,6 +169,7 @@ pub fn always(_state: &PlannerState) -> bool {
     true
 }
 
+#[cfg(test)]
 pub fn never(_state: &PlannerState) -> bool {
     false
 }

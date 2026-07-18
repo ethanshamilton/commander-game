@@ -25,7 +25,9 @@ use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportCadence};
-use crate::player::mission_placement::{MissionPlacementState, SelectedMission};
+use crate::player::mission_placement::{
+    MissionPlacementState, SelectedMission, expiry_duration_ticks,
+};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
 use crate::scenarios::{ScenarioDefinition, SelectedScenario};
 use crate::ui::active_action::{ActiveActionPanel, ActiveActionText};
@@ -144,6 +146,9 @@ struct RenameSelectedMissionAction;
 
 #[derive(Component)]
 struct MissionRenameInput;
+
+#[derive(Component)]
+struct MissionExpiryInput;
 
 #[derive(Component)]
 pub struct MissionAssignmentStatus;
@@ -283,11 +288,27 @@ fn handle_unit_debug_section_toggle(
 fn begin_hold_line_placement(
     activate: On<Activate>,
     actions: Query<(), With<BeginHoldLinePlacementAction>>,
+    inputs: Query<&EditableText, With<MissionExpiryInput>>,
     mut placement: ResMut<MissionPlacementState>,
+    mut feedback: ResMut<MissionAssignmentFeedback>,
 ) {
-    if actions.get(activate.entity).is_ok() {
-        placement.begin_hold_line();
+    if actions.get(activate.entity).is_err() {
+        return;
     }
+    let Ok(input) = inputs.single() else {
+        return;
+    };
+    let expiry_text = input.value().to_string();
+    let Ok(minutes) = expiry_text.trim().parse::<u64>() else {
+        feedback.0 = "Expiry must be a non-negative whole number of minutes.".into();
+        return;
+    };
+    let Ok(duration_ticks) = expiry_duration_ticks(minutes) else {
+        feedback.0 = "Expiry duration is too large.".into();
+        return;
+    };
+
+    placement.begin_hold_line(duration_ticks);
 }
 
 fn select_mission(
@@ -1233,6 +1254,27 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                             BackgroundColor(Color::srgb(0.12, 0.12, 0.08)),
                         ))
                         .with_children(|mission_menu| {
+                            mission_menu.spawn((
+                                Text::new("Expiry minutes (0 = none)"),
+                                TextFont {
+                                    font_size: FontSize::Px(12.0),
+                                    ..default()
+                                },
+                                TextColor(Color::srgb(0.8, 0.8, 0.65)),
+                            ));
+                            mission_menu.spawn((
+                                EditableText::new("5"),
+                                TextCursorStyle::default(),
+                                MissionExpiryInput,
+                                Node {
+                                    width: Val::Px(180.0),
+                                    height: Val::Px(30.0),
+                                    padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.08, 0.08, 0.08)),
+                                BorderColor::all(Color::srgb(0.55, 0.55, 0.45)),
+                            ));
                             spawn_text_button(
                                 mission_menu,
                                 TextButtonConfig {

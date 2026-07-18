@@ -25,6 +25,9 @@ pub struct PlannerState {
     pub at_own_mission_station: bool,
     pub assigned_task: Option<AssignedTaskBelief>,
     pub at_assigned_station: bool,
+    /// Rally point from the newest expired mission/task assignment.
+    pub fallback_point_m: Option<Vec2>,
+    pub at_fallback_point: bool,
 }
 
 impl PlannerState {
@@ -54,6 +57,10 @@ impl PlannerState {
         self.assigned_task
             .and_then(|task| task.expires_at)
             .is_some_and(|expires_at| self.tick >= expires_at)
+    }
+
+    pub fn fallback_is_active(&self) -> bool {
+        self.fallback_point_m.is_some()
     }
 }
 
@@ -130,6 +137,8 @@ impl Default for PlannerState {
             at_own_mission_station: false,
             assigned_task: None,
             at_assigned_station: false,
+            fallback_point_m: None,
+            at_fallback_point: false,
         }
     }
 }
@@ -160,6 +169,8 @@ pub struct PlannerStateDigest {
     pub assigned_task: Option<(MissionId, u64)>,
     pub assigned_task_expired: bool,
     pub at_assigned_station: bool,
+    pub fallback_point_dm: Option<(i32, i32)>,
+    pub at_fallback_point: bool,
 }
 
 impl PlannerStateDigest {
@@ -184,6 +195,8 @@ impl PlannerStateDigest {
             assigned_task: state.assigned_task.map(AssignedTaskBelief::identity),
             assigned_task_expired: state.assigned_task_is_expired(),
             at_assigned_station: state.at_assigned_station,
+            fallback_point_dm: state.fallback_point_m.map(quantize_decimeters),
+            at_fallback_point: state.at_fallback_point,
         }
     }
 }

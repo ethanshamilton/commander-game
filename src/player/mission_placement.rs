@@ -4,7 +4,7 @@ use crate::GameState;
 use crate::gameplay::missions::{
     MissionArea, MissionAssignees, MissionIdAllocator, MissionKind, MissionPlan, TacticalMission,
 };
-use crate::gameplay::simulation::SimulationClock;
+use crate::gameplay::simulation::{SIMULATION_TICK_HZ, SimulationClock};
 use crate::screens::scenario::ScenarioScoped;
 use crate::ui::active_action::ActiveAction;
 use bevy::prelude::*;
@@ -13,6 +13,19 @@ use bevy::window::PrimaryWindow;
 const SIDEBAR_WIDTH_PX: f32 = 200.0;
 const BOTTOM_BAR_HEIGHT_PX: f32 = 100.0;
 const INFO_PANEL_WIDTH_PX: f32 = 240.0;
+pub const SIMULATION_TICKS_PER_MINUTE: u64 = SIMULATION_TICK_HZ as u64 * 60;
+
+/// Convert a player-entered duration to ticks. Zero deliberately means that
+/// the mission has no expiration.
+pub fn expiry_duration_ticks(minutes: u64) -> Result<Option<u64>, &'static str> {
+    if minutes == 0 {
+        return Ok(None);
+    }
+    minutes
+        .checked_mul(SIMULATION_TICKS_PER_MINUTE)
+        .map(Some)
+        .ok_or("expiry duration is too large")
+}
 
 pub struct MissionPlacementPlugin;
 
@@ -53,8 +66,8 @@ impl MissionPlacementState {
         self.active.is_some()
     }
 
-    pub fn begin_hold_line(&mut self) {
-        self.active = Some(MissionPlacement::hold_line());
+    pub fn begin_hold_line(&mut self, expiry_duration_ticks: Option<u64>) {
+        self.active = Some(MissionPlacement::hold_line(expiry_duration_ticks));
     }
 
     pub fn cancel(&mut self) {
@@ -68,15 +81,18 @@ pub struct MissionPlacement {
     pub phase: HoldLinePlacementPhase,
     pub line_start_m: Option<Vec2>,
     pub line_end_m: Option<Vec2>,
+    /// `None` means the mission does not expire.
+    pub expiry_duration_ticks: Option<u64>,
 }
 
 impl MissionPlacement {
-    pub fn hold_line() -> Self {
+    pub fn hold_line(expiry_duration_ticks: Option<u64>) -> Self {
         Self {
             kind: MissionKind::HoldLine,
             phase: HoldLinePlacementPhase::LineStart,
             line_start_m: None,
             line_end_m: None,
+            expiry_duration_ticks,
         }
     }
 
@@ -184,6 +200,17 @@ fn place_hold_line_points(
                 return;
             };
 
+            let expires_at = match active.expiry_duration_ticks {
+                Some(duration) => {
+                    let Some(expires_at) = clock.tick.checked_add(duration) else {
+                        warn!("discarded tactical mission with overflowing expiry");
+                        placement.cancel();
+                        return;
+                    };
+                    Some(expires_at)
+                }
+                None => None,
+            };
             let id = ids.allocate();
             let plan = hold_line_plan(
                 id,
@@ -191,6 +218,7 @@ fn place_hold_line_points(
                 from_m,
                 to_m,
                 point_m,
+                expires_at,
                 clock.tick,
             );
 
@@ -223,6 +251,7 @@ fn hold_line_plan(
     from_m: Vec2,
     to_m: Vec2,
     rally_point_m: Vec2,
+    expires_at: Option<u64>,
     created_tick: u64,
 ) -> MissionPlan {
     MissionPlan {
@@ -231,7 +260,7 @@ fn hold_line_plan(
         kind: MissionKind::HoldLine,
         area: MissionArea::Line { from_m, to_m },
         rally_point_m,
-        expires_at: None,
+        expires_at,
         created_tick,
     }
 }
@@ -305,8 +334,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn zero_expiry_minutes_means_no_expiration() {
+        assert_eq!(expiry_duration_ticks(0), Ok(None));
+        assert_eq!(
+            expiry_duration_ticks(5),
+            Ok(Some(5 * SIMULATION_TICKS_PER_MINUTE))
+        );
+        assert!(expiry_duration_ticks(u64::MAX).is_err());
+    }
+
+    #[test]
     fn hold_line_placement_progresses_through_the_expected_instructions() {
-        let mut placement = MissionPlacement::hold_line();
+        let mut placement = MissionPlacement::hold_line(Some(300));
         assert_eq!(placement.instruction(), "Create Line Start");
 
         placement.line_start_m = Some(Vec2::ZERO);
@@ -326,11 +365,13 @@ mod tests {
             Vec2::new(-5.0, 0.0),
             Vec2::new(5.0, 0.0),
             Vec2::new(0.0, -3.0),
+            Some(42 + 5 * SIMULATION_TICKS_PER_MINUTE),
             42,
         );
 
         assert_eq!(plan.validate(), Ok(()));
         assert_eq!(plan.label, "Hold Line 1");
+        assert_eq!(plan.expires_at, Some(42 + 5 * SIMULATION_TICKS_PER_MINUTE));
     }
 
     #[test]
@@ -354,7 +395,7 @@ mod tests {
     #[test]
     fn mission_ui_state_is_reset_on_scenario_exit() {
         let mut placement = MissionPlacementState {
-            active: Some(MissionPlacement::hold_line()),
+            active: Some(MissionPlacement::hold_line(None)),
         };
         let mut selected = SelectedMission {
             entity: Some(Entity::PLACEHOLDER),
