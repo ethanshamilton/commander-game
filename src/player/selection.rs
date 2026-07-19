@@ -6,11 +6,11 @@ use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::measurements::{meters, to_meters};
 use crate::gameplay::missions::MissionAssignmentRequested;
-use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
+use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
 use crate::gameplay::packets::{
     Address, OrderCommand, Outbox, PacketIdAllocator, PacketPayload, SeenPackets,
 };
-use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::PositionTarget;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
@@ -182,7 +182,7 @@ fn issue_contextual_order(
         if let Some(target) = hostile_unit_at_cursor(&knowledge, control.side, world_position) {
             OrderCommand::Combat(CombatOrder::FireAt { target })
         } else {
-            OrderCommand::Unit(UnitOrder::MoveTo {
+            OrderCommand::Unit(MovementOrder::MoveTo {
                 target: PositionTarget::new(world_position.map(to_meters), None),
             })
         };
@@ -192,7 +192,7 @@ fn issue_contextual_order(
             OrderCommand::Unit(order) => {
                 commands
                     .entity(entity)
-                    .insert((order, UnitOrderSource::player()));
+                    .insert((order, MovementOrderSource::player()));
             }
             OrderCommand::Combat(order) => {
                 commands

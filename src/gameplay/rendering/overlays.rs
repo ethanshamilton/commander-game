@@ -13,7 +13,7 @@ use crate::gameplay::comms::{CommsGraph, VoiceComms};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::{BEVY_UNITS_PER_METER, meters};
 use crate::gameplay::missions::{MissionArea, MissionAssignees, MissionPlan, TacticalMission};
-use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::intel::ReportedLifeStatus;
 use crate::player::control::{PlayerControl, UnitIntelAccess};
@@ -361,7 +361,7 @@ fn draw_selected_unit_order(
     selected: Res<SelectedUnit>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    units: Query<(&BattlefieldPosition, Option<&UnitOrder>), With<Soldier>>,
+    units: Query<(&BattlefieldPosition, Option<&MovementOrder>), With<Soldier>>,
     mut gizmos: Gizmos,
 ) {
     let Some(entity) = selected.entity else {
@@ -376,7 +376,7 @@ fn draw_selected_unit_order(
         return;
     };
 
-    let Some(UnitOrder::MoveTo { target }) = order else {
+    let Some(MovementOrder::MoveTo { target }) = order else {
         return;
     };
 

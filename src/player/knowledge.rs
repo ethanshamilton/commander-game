@@ -308,7 +308,7 @@ mod tests {
     use crate::actors::units::{Rank, Role};
     use crate::ai::perception::{Contact, ContactKind};
     use crate::gameplay::packets::{InboxEntry, OrderCommand};
-    use crate::gameplay::simulation::UnitOrder;
+    use crate::gameplay::simulation::MovementOrder;
     use bevy::ecs::system::RunSystemOnce;
 
     fn spawn_unit(world: &mut World, side: Side, position: Vec2) -> Entity {
@@ -440,7 +440,7 @@ mod tests {
                     origin: player,
                     address: Address::Direct(player),
                     created_tick: 7,
-                    payload: PacketPayload::OrderCommand(OrderCommand::Unit(UnitOrder::Hold)),
+                    payload: PacketPayload::OrderCommand(OrderCommand::Unit(MovementOrder::Hold)),
                 },
                 fresh: false,
             },

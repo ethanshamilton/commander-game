@@ -10,8 +10,8 @@ use crate::gameplay::missions::{
     AssignedMission, AssignedTask, MissionAssignmentMessage, TaskAssignmentMessage,
     should_install_task_assignment,
 };
-use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
-use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
+use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
+use crate::gameplay::simulation::{MovementOrder, SimulationClock, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
 use crate::intel::ReportedLifeStatus;
 use crate::player::knowledge::PlayerControlledUnit;
@@ -101,7 +101,7 @@ pub enum PacketPayload {
 /// component types in one enum variant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OrderCommand {
-    Unit(UnitOrder),
+    Unit(MovementOrder),
     Combat(CombatOrder),
 }
 
@@ -440,7 +440,7 @@ fn apply_order_commands(
                 OrderCommand::Unit(order) => {
                     commands
                         .entity(entity)
-                        .insert((order, UnitOrderSource::player()));
+                        .insert((order, MovementOrderSource::player()));
                 }
                 OrderCommand::Combat(order) => {
                     commands
@@ -1019,7 +1019,7 @@ mod tests {
         insert_command_forest(&mut world, player, subordinate);
         link(&mut world, player, subordinate);
 
-        let order = UnitOrder::MoveTo {
+        let order = MovementOrder::MoveTo {
             target: PositionTarget::new(Vec2::new(10.0, 20.0), None),
         };
         world
@@ -1039,14 +1039,14 @@ mod tests {
             .ids
             .insert(PacketId(1));
 
-        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<MovementOrder>(subordinate).is_none());
 
         run_packet_command_tick(&mut world);
 
-        assert_eq!(world.get::<UnitOrder>(subordinate), Some(&order));
+        assert_eq!(world.get::<MovementOrder>(subordinate), Some(&order));
         assert_eq!(
             world
-                .get::<UnitOrderSource>(subordinate)
+                .get::<MovementOrderSource>(subordinate)
                 .map(|src| src.source),
             Some(crate::gameplay::orders::OrderSource::Player)
         );
@@ -1115,7 +1115,7 @@ mod tests {
                 origin: player,
                 address: Address::Direct(subordinate),
                 created_tick: 0,
-                payload: PacketPayload::OrderCommand(OrderCommand::Unit(UnitOrder::Hold)),
+                payload: PacketPayload::OrderCommand(OrderCommand::Unit(MovementOrder::Hold)),
             });
         world
             .get_mut::<SeenPackets>(player)
@@ -1127,7 +1127,7 @@ mod tests {
             run_packet_command_tick(&mut world);
         }
 
-        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<MovementOrder>(subordinate).is_none());
     }
 
     #[test]
@@ -1150,7 +1150,7 @@ mod tests {
                 origin: impostor,
                 address: Address::Direct(subordinate),
                 created_tick: 0,
-                payload: PacketPayload::OrderCommand(OrderCommand::Unit(UnitOrder::Hold)),
+                payload: PacketPayload::OrderCommand(OrderCommand::Unit(MovementOrder::Hold)),
             });
         world
             .get_mut::<SeenPackets>(impostor)
@@ -1160,7 +1160,7 @@ mod tests {
 
         run_packet_command_tick(&mut world);
 
-        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<MovementOrder>(subordinate).is_none());
         assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
     }
 
@@ -1204,7 +1204,7 @@ mod tests {
         let assigned = world.get::<AssignedTask>(subordinate).unwrap();
         assert_eq!(assigned.directive, directive);
         assert_eq!(assigned.assigned_by, leader);
-        assert!(world.get::<UnitOrder>(subordinate).is_none());
+        assert!(world.get::<MovementOrder>(subordinate).is_none());
         assert!(world.get::<CombatOrder>(subordinate).is_none());
         assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
     }

@@ -8,9 +8,9 @@ use crate::GameState;
 use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::combat::{CombatOrder, ResolvedShot};
 use crate::gameplay::orders::{
-    CombatOrderSource, UnitOrderSource, clear_if_htn, is_player_sourced,
+    CombatOrderSource, MovementOrderSource, clear_if_htn, is_player_sourced,
 };
-use crate::gameplay::simulation::{SimulationSet, UnitOrder};
+use crate::gameplay::simulation::{MovementOrder, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -96,7 +96,7 @@ pub fn deliberate_autonomous_units(
             Entity,
             &PlannerBelief,
             &DomainRef,
-            Option<&UnitOrderSource>,
+            Option<&MovementOrderSource>,
             Option<&CombatOrderSource>,
             Option<&mut PlanRunner>,
             &mut DecisionTrace,
@@ -180,7 +180,7 @@ pub fn deliberate_autonomous_units(
                         trigger: ReplanTrigger::RelevantStateChanged,
                     },
                 );
-                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<MovementOrder>(&mut commands, entity, unit_source);
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 trace_plan_created(
                     &mut trace,
@@ -314,9 +314,9 @@ pub fn advance_plan_execution(
         (
             Entity,
             &PlannerBelief,
-            Option<&UnitOrder>,
+            Option<&MovementOrder>,
             Option<&CombatOrder>,
-            Option<&UnitOrderSource>,
+            Option<&MovementOrderSource>,
             Option<&CombatOrderSource>,
             &mut PlanRunner,
             &mut DecisionTrace,
@@ -348,7 +348,7 @@ pub fn advance_plan_execution(
                 trace_elapsed_s,
                 TraceEvent::PlanCompleted,
             );
-            clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+            clear_if_htn::<MovementOrder>(&mut commands, entity, unit_source);
             clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
@@ -367,7 +367,7 @@ pub fn advance_plan_execution(
                     failed_condition: "precondition failed while running",
                 },
             );
-            clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+            clear_if_htn::<MovementOrder>(&mut commands, entity, unit_source);
             clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
             commands.entity(entity).remove::<PlanRunner>();
             continue;
@@ -380,7 +380,7 @@ pub fn advance_plan_execution(
         match outcome {
             StepPoll::Running => {}
             StepPoll::Succeeded => {
-                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<MovementOrder>(&mut commands, entity, unit_source);
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 runner.current += 1;
                 if runner.current >= runner.plan.steps.len() {
@@ -405,7 +405,7 @@ pub fn advance_plan_execution(
                         failed_condition: reason,
                     },
                 );
-                clear_if_htn::<UnitOrder>(&mut commands, entity, unit_source);
+                clear_if_htn::<MovementOrder>(&mut commands, entity, unit_source);
                 clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
                 commands.entity(entity).remove::<PlanRunner>();
             }
@@ -451,13 +451,13 @@ fn plan_bound_operators_differ(a: &Plan, b: &Plan) -> bool {
 
 /// True if a plan would overwrite an order lane currently controlled by the player.
 ///
-/// `UnitOrder` and `CombatOrder` are orthogonal: a player movement order should
+/// `MovementOrder` and `CombatOrder` are orthogonal: a player movement order should
 /// not suppress an autonomous fire decision, but it must block autonomous move/hold
 /// steps that would replace the player's movement directive. Same for explicit
 /// player combat orders.
 fn plan_conflicts_with_external_order(
     plan: &Plan,
-    unit_source: Option<&UnitOrderSource>,
+    unit_source: Option<&MovementOrderSource>,
     combat_source: Option<&CombatOrderSource>,
 ) -> bool {
     let player_unit_order = is_player_sourced(unit_source);
@@ -731,15 +731,18 @@ mod tests {
         app.update();
 
         assert!(matches!(
-            app.world().get::<UnitOrder>(entity).unwrap(),
-            UnitOrder::Hold
+            app.world().get::<MovementOrder>(entity).unwrap(),
+            MovementOrder::Hold
         ));
         assert!(matches!(
             app.world().get::<CombatOrder>(entity).unwrap(),
             CombatOrder::HoldFire
         ));
         assert_eq!(
-            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            app.world()
+                .get::<MovementOrderSource>(entity)
+                .unwrap()
+                .source,
             crate::gameplay::orders::OrderSource::Htn
         );
         assert_eq!(
@@ -775,8 +778,8 @@ mod tests {
                 Autonomous,
                 DecisionTrace::default(),
                 PlannerBelief::default(),
-                UnitOrder::Hold,
-                UnitOrderSource::htn(),
+                MovementOrder::Hold,
+                MovementOrderSource::htn(),
                 CombatOrder::HoldFire,
                 CombatOrderSource::htn(),
                 PlanRunner {
@@ -791,7 +794,7 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<PlanRunner>(entity).is_none());
-        assert!(app.world().get::<UnitOrder>(entity).is_none());
+        assert!(app.world().get::<MovementOrder>(entity).is_none());
         assert!(app.world().get::<CombatOrder>(entity).is_none());
     }
 
@@ -1048,7 +1051,7 @@ mod tests {
         );
         let domain = builder.build(mov);
         let plan = plan(&domain, &PlannerState::default()).unwrap();
-        let player_order = UnitOrder::MoveTo {
+        let player_order = MovementOrder::MoveTo {
             target: PositionTarget::new(Vec2::new(5.0, 0.0), None),
         };
         let entity = app.world_mut().spawn((
@@ -1063,7 +1066,7 @@ mod tests {
             BattlefieldPosition(Vec2::ZERO),
             DecisionTrace::default(),
             player_order,
-            UnitOrderSource::player(),
+            MovementOrderSource::player(),
             PlanRunner {
                 plan,
                 current: 0,
@@ -1094,9 +1097,15 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<PlanRunner>(entity).is_none());
-        assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
         assert_eq!(
-            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            app.world().get::<MovementOrder>(entity),
+            Some(&player_order)
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementOrderSource>(entity)
+                .unwrap()
+                .source,
             crate::gameplay::orders::OrderSource::Player
         );
         assert!(
@@ -1114,7 +1123,7 @@ mod tests {
     }
 
     /// An entity that has an autonomous plan running and a player-sourced
-    /// `UnitOrder` must have its runner torn down without the order (or its
+    /// `MovementOrder` must have its runner torn down without the order (or its
     /// provenance) being cleared.
     #[test]
     fn player_move_order_does_not_block_autonomous_fire() {
@@ -1138,13 +1147,13 @@ mod tests {
             );
 
         let target = Entity::from_raw_u32(99).unwrap();
-        let player_order = UnitOrder::MoveTo {
+        let player_order = MovementOrder::MoveTo {
             target: PositionTarget::new(Vec2::new(5.0, 0.0), None),
         };
         let entity = spawn_autonomous(app.world_mut());
         app.world_mut().entity_mut(entity).insert((
             player_order,
-            UnitOrderSource::player(),
+            MovementOrderSource::player(),
             PerceptionMemory {
                 contacts: vec![Contact {
                     target,
@@ -1161,9 +1170,15 @@ mod tests {
 
         app.update();
 
-        assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
         assert_eq!(
-            app.world().get::<UnitOrderSource>(entity).unwrap().source,
+            app.world().get::<MovementOrder>(entity),
+            Some(&player_order)
+        );
+        assert_eq!(
+            app.world()
+                .get::<MovementOrderSource>(entity)
+                .unwrap()
+                .source,
             crate::gameplay::orders::OrderSource::Player
         );
         assert_eq!(
@@ -1192,7 +1207,7 @@ mod tests {
 
         let domain = test_domain();
         let running_plan = plan(&domain, &PlannerState::default()).unwrap();
-        let player_order = UnitOrder::MoveTo {
+        let player_order = MovementOrder::MoveTo {
             target: PositionTarget::new(Vec2::new(3.0, 4.0), None),
         };
 
@@ -1208,7 +1223,7 @@ mod tests {
             BattlefieldPosition(Vec2::ZERO),
             DecisionTrace::default(),
             player_order,
-            UnitOrderSource::player(),
+            MovementOrderSource::player(),
             PlanRunner {
                 plan: running_plan,
                 current: 0,
@@ -1239,8 +1254,11 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<PlanRunner>(entity).is_none());
-        assert_eq!(app.world().get::<UnitOrder>(entity), Some(&player_order));
-        assert!(app.world().get::<UnitOrderSource>(entity).is_some());
+        assert_eq!(
+            app.world().get::<MovementOrder>(entity),
+            Some(&player_order)
+        );
+        assert!(app.world().get::<MovementOrderSource>(entity).is_some());
     }
 
     #[test]

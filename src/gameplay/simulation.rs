@@ -2,7 +2,7 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Mobility, Soldier};
-use crate::gameplay::orders::UnitOrderSource;
+use crate::gameplay::orders::MovementOrderSource;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
 use bevy::prelude::*;
 
@@ -85,7 +85,7 @@ impl Default for SimulationClock {
 
 #[allow(dead_code)]
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub enum UnitOrder {
+pub enum MovementOrder {
     MoveTo { target: PositionTarget },
     Hold,
 }
@@ -118,7 +118,7 @@ fn move_units(
             &mut BattlefieldPosition,
             &mut Heading,
             &Mobility,
-            &UnitOrder,
+            &MovementOrder,
         ),
         (With<Soldier>, With<Alive>),
     >,
@@ -126,7 +126,7 @@ fn move_units(
     let dt = clock.tick_dt_s * clock.speed;
 
     for (entity, mut position, mut heading, mobility, order) in &mut units {
-        let UnitOrder::MoveTo { target } = *order else {
+        let MovementOrder::MoveTo { target } = *order else {
             continue;
         };
 
@@ -139,7 +139,7 @@ fn move_units(
             }
             commands
                 .entity(entity)
-                .remove::<(UnitOrder, UnitOrderSource)>();
+                .remove::<(MovementOrder, MovementOrderSource)>();
             continue;
         }
 
@@ -151,7 +151,7 @@ fn move_units(
             }
             commands
                 .entity(entity)
-                .remove::<(UnitOrder, UnitOrderSource)>();
+                .remove::<(MovementOrder, MovementOrderSource)>();
         } else {
             let direction = offset / distance_m;
             position.0 += direction * max_step_m;
@@ -177,10 +177,10 @@ mod tests {
                 Mobility { speed: 1 },
                 BattlefieldPosition(Vec2::ZERO),
                 Heading(heading),
-                UnitOrder::MoveTo {
+                MovementOrder::MoveTo {
                     target: PositionTarget::new(Vec2::ZERO, arrival_heading),
                 },
-                UnitOrderSource::htn(),
+                MovementOrderSource::htn(),
             ))
             .id()
     }
@@ -195,8 +195,8 @@ mod tests {
         world.flush();
 
         assert_eq!(world.get::<Heading>(entity).unwrap().0, 1.25);
-        assert!(world.get::<UnitOrder>(entity).is_none());
-        assert!(world.get::<UnitOrderSource>(entity).is_none());
+        assert!(world.get::<MovementOrder>(entity).is_none());
+        assert!(world.get::<MovementOrderSource>(entity).is_none());
     }
 
     #[test]

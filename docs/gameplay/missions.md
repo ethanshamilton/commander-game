@@ -7,7 +7,7 @@ concrete movement or combat order.
 `MissionPlan` stores local plan state, including its area, rally point, optional
 expiry, and `MissionAssignees`. `MissionSnapshot` is the copy safe to send in a
 packet. A recipient installs `AssignedMission` as an HTN input after packet
-validation; it must not directly install `UnitOrder` or `CombatOrder`.
+validation; it must not directly install `MovementOrder` or `CombatOrder`.
 
 All mission coordinates are meters. `MissionPlan::validate` rejects incompatible
 kind/area pairs, non-finite points and radii, degenerate geometry, blank labels,
@@ -53,7 +53,7 @@ Coordinator is a transient command relationship, not a rank-specific domain.
 
 Recipients validate task authority, geometry, expiry, and `issued_tick` before
 installing `AssignedTask`. Soldier and squad-leader HTN domains share assigned-
-task behavior: units move to their station with an HTN-sourced `UnitOrder`, then
+task behavior: units move to their station with an HTN-sourced `MovementOrder`, then
 hold there. Survival and fresh-contact engagement remain higher priorities;
 displacement or task replacement invalidates the running task step and causes
 replanning.

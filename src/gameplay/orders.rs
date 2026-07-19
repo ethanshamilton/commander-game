@@ -24,7 +24,7 @@ pub enum OrderSource {
 /// on the same entity. Every site that inserts/removes/overwrites the order
 /// component must do the same to its provenance in the same command batch.
 ///
-/// The `PhantomData<O>` marker exists purely so `OrderProvenance<UnitOrder>`
+/// The `PhantomData<O>` marker exists purely so `OrderProvenance<MovementOrder>`
 /// and `OrderProvenance<CombatOrder>` are distinct component types (ECS keys
 /// components by concrete type) while sharing all logic.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +70,7 @@ pub fn clear_if_htn<O: Component>(
     }
 }
 
-pub type UnitOrderSource = OrderProvenance<crate::gameplay::simulation::UnitOrder>;
+pub type MovementOrderSource = OrderProvenance<crate::gameplay::simulation::MovementOrder>;
 pub type CombatOrderSource = OrderProvenance<crate::gameplay::combat::CombatOrder>;
 
 #[cfg(test)]

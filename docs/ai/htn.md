@@ -21,7 +21,7 @@ around it, so the decomposition logic is unit-testable without spinning up an
   transient role rather than a rank-selected domain.
 - **`operators.rs`** — `BoundOperator` (the concrete, parameterized action a
   primitive task resolves to: `Hold`/`MoveTo`/`FireAt`/delegation) plus its `dispatch()`
-  (turn the operator into `UnitOrder`/`CombatOrder` insertions, tagged
+  (turn the operator into `MovementOrder`/`CombatOrder` insertions, tagged
   `OrderSource::Htn`) and `poll()` (has the running step finished, failed, or
   is it still in flight). This is the one file that knows how operators talk
   to gameplay.
@@ -31,7 +31,7 @@ around it, so the decomposition logic is unit-testable without spinning up an
 - **`synthesis.rs`** — `PlannerBelief` component + `synthesize_beliefs`
   system. Runs once per tick, before any other Thinking system, converting
   unit-local simulation data (`PerceptionMemory`, `Health`, `Inventory`,
-  current `UnitOrder`, recent resolved shots) into each unit's
+  current `MovementOrder`, recent resolved shots) into each unit's
   `PlannerBelief.state`. Every other Thinking system reads `&PlannerBelief`
   instead of re-deriving state from raw components.
 - **`planner.rs`** — the pure decomposition algorithm: recursive DFS over the
@@ -77,7 +77,7 @@ variant):
 1. Add the variant to `BoundOperator` in `operators.rs`.
 2. Extend `describe()` (shows up in `DecisionTrace`).
 3. Extend `dispatch()` — insert the gameplay order component(s) it maps to,
-   each paired with `UnitOrderSource::htn()` / `CombatOrderSource::htn()` in
+   each paired with `MovementOrderSource::htn()` / `CombatOrderSource::htn()` in
    the same tuple (see the invariant in `docs/gameplay/orders.md`: order and
    provenance are inserted/removed together, always).
 4. Extend `poll()` — decide `Running`/`Succeeded`/`Failed(&'static str)` from

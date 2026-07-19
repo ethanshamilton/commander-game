@@ -2,8 +2,8 @@ use super::state::PlannerState;
 use crate::ai::perception::ContactKind;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::missions::{MissionId, PendingTaskAssignment, TaskDirective};
-use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
-use crate::gameplay::simulation::UnitOrder;
+use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
+use crate::gameplay::simulation::MovementOrder;
 use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
@@ -71,8 +71,8 @@ impl BoundOperator {
         match *self {
             BoundOperator::Hold => {
                 commands.entity(entity).insert((
-                    UnitOrder::Hold,
-                    UnitOrderSource::htn(),
+                    MovementOrder::Hold,
+                    MovementOrderSource::htn(),
                     CombatOrder::HoldFire,
                     CombatOrderSource::htn(),
                 ));
@@ -80,7 +80,7 @@ impl BoundOperator {
             BoundOperator::MoveTo { target } => {
                 commands
                     .entity(entity)
-                    .insert((UnitOrder::MoveTo { target }, UnitOrderSource::htn()));
+                    .insert((MovementOrder::MoveTo { target }, MovementOrderSource::htn()));
             }
             BoundOperator::FireAt { target } => {
                 commands
@@ -113,12 +113,12 @@ impl BoundOperator {
     pub fn poll(
         &self,
         state: &PlannerState,
-        unit_order: Option<&UnitOrder>,
+        movement_order: Option<&MovementOrder>,
         combat_order: Option<&CombatOrder>,
     ) -> StepPoll {
         match *self {
             BoundOperator::Hold => StepPoll::Running,
-            BoundOperator::MoveTo { target } => poll_move(target, unit_order),
+            BoundOperator::MoveTo { target } => poll_move(target, movement_order),
             BoundOperator::FireAt { target } => poll_fire(target, combat_order, state),
             BoundOperator::DelegateHoldStation {
                 mission_id,
@@ -141,10 +141,10 @@ impl BoundOperator {
     }
 }
 
-fn poll_move(target: PositionTarget, current_order: Option<&UnitOrder>) -> StepPoll {
+fn poll_move(target: PositionTarget, current_order: Option<&MovementOrder>) -> StepPoll {
     match current_order {
         None => StepPoll::Succeeded,
-        Some(UnitOrder::MoveTo { target: current }) => {
+        Some(MovementOrder::MoveTo { target: current }) => {
             let same_position =
                 current.position_m.distance(target.position_m) <= MOVE_DESTINATION_EPSILON_M;
             let same_heading = match (current.heading_radians, target.heading_radians) {
@@ -161,7 +161,7 @@ fn poll_move(target: PositionTarget, current_order: Option<&UnitOrder>) -> StepP
                 StepPoll::Failed("move order target changed")
             }
         }
-        Some(UnitOrder::Hold) => StepPoll::Failed("move order replaced by hold"),
+        Some(MovementOrder::Hold) => StepPoll::Failed("move order replaced by hold"),
     }
 }
 
@@ -209,7 +209,7 @@ mod tests {
         let target = PositionTarget::new(Vec2::new(1.0, 0.0), Some(1.0));
         let op = BoundOperator::MoveTo { target };
         let state = PlannerState::default();
-        let order = UnitOrder::MoveTo { target };
+        let order = MovementOrder::MoveTo { target };
 
         assert_eq!(op.poll(&state, Some(&order), None), StepPoll::Running);
     }

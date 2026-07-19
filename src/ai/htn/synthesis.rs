@@ -11,7 +11,7 @@ use crate::gameplay::missions::{
     AssignedMission, AssignedTask, MissionArea, MissionDelegationProgress, MissionKind,
     TaskDirective,
 };
-use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
 use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;
@@ -47,7 +47,7 @@ pub fn synthesize_beliefs(
             &Inventory,
             &PerceptionMemory,
             Option<&AuditorySensor>,
-            Option<&UnitOrder>,
+            Option<&MovementOrder>,
             Option<&AssignedMission>,
             Option<&AssignedTask>,
             Option<&MissionDelegationProgress>,
@@ -226,7 +226,7 @@ pub fn synthesize_planner_state(
     inventory: &Inventory,
     memory: &PerceptionMemory,
     auditory_sensor: Option<&AuditorySensor>,
-    current_order: Option<&UnitOrder>,
+    current_order: Option<&MovementOrder>,
     recent_shots: &[ResolvedShot],
 ) -> PlannerState {
     synthesize_planner_state_with_heading(
@@ -250,7 +250,7 @@ fn synthesize_planner_state_with_heading(
     inventory: &Inventory,
     memory: &PerceptionMemory,
     auditory_sensor: Option<&AuditorySensor>,
-    current_order: Option<&UnitOrder>,
+    current_order: Option<&MovementOrder>,
     recent_shots: &[ResolvedShot],
 ) -> PlannerState {
     let nearest_hostile = nearest_hostile_belief(position.0, memory);
@@ -264,7 +264,7 @@ fn synthesize_planner_state_with_heading(
         has_ammo: inventory.has_ammo(),
         nearest_hostile,
         under_fire,
-        has_move_target: matches!(current_order, Some(UnitOrder::MoveTo { .. })),
+        has_move_target: matches!(current_order, Some(MovementOrder::MoveTo { .. })),
         tick: clock.tick,
         ..Default::default()
     }
@@ -783,7 +783,7 @@ mod tests {
             &inventory,
             &memory,
             None,
-            Some(&UnitOrder::MoveTo {
+            Some(&MovementOrder::MoveTo {
                 target: PositionTarget::new(Vec2::new(1.0, 0.0), None),
             }),
             &[],
@@ -795,7 +795,7 @@ mod tests {
             &inventory,
             &memory,
             None,
-            Some(&UnitOrder::Hold),
+            Some(&MovementOrder::Hold),
             &[],
         );
         let no_order = synthesize_planner_state(
@@ -827,7 +827,7 @@ mod tests {
                 },
                 inventory_with_ammo(5),
                 AuditorySensor { range_m: 40.0 },
-                UnitOrder::MoveTo {
+                MovementOrder::MoveTo {
                     target: PositionTarget::new(Vec2::new(3.0, 4.0), None),
                 },
                 PerceptionMemory {
@@ -853,7 +853,7 @@ mod tests {
         let inventory = world.get::<Inventory>(unit).unwrap();
         let memory = world.get::<PerceptionMemory>(unit).unwrap();
         let auditory = world.get::<AuditorySensor>(unit);
-        let order = world.get::<UnitOrder>(unit);
+        let order = world.get::<MovementOrder>(unit);
 
         let state = synthesize_planner_state(
             &clock,

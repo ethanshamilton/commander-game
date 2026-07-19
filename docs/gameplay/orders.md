@@ -1,6 +1,6 @@
 # Order provenance
 
-`UnitOrder` and `CombatOrder` stay separate components (orthogonal: a unit can
+`MovementOrder` and `CombatOrder` stay separate components (orthogonal: a unit can
 be moving *and* firing, and each is read by a different system set). What is
 unified is provenance — *who* issued the order — via `OrderProvenance<O>`, a
 marker-typed generic component so arbitration logic works over any order kind
@@ -15,7 +15,7 @@ Three sources:
   or combat resolution decaying a spent `FireAt` back to `HoldFire`). Never a
   directive, so it never suppresses planning.
 
-`UnitOrder::MoveTo` carries a `PositionTarget`: an absolute battlefield position
+`MovementOrder::MoveTo` carries a `PositionTarget`: an absolute battlefield position
 plus an optional arrival heading. This makes "move to Y and face Z" one atomic
 positioning order. A target without a heading retains ordinary heading-agnostic
 movement semantics.
@@ -25,7 +25,7 @@ on the same entity. Every site that inserts, removes, or overwrites an order
 component must do the same to its provenance in the same command batch.
 
 **Arbitration rule:** an order counts as "external" for its own order lane if
-and only if its source is `Player`. Because `UnitOrder` and `CombatOrder` are
-orthogonal, a player `UnitOrder::MoveTo` blocks autonomous movement/hold steps
+and only if its source is `Player`. Because `MovementOrder` and `CombatOrder` are
+orthogonal, a player `MovementOrder::MoveTo` blocks autonomous movement/hold steps
 that would overwrite the move order, but it does not block an autonomous
 `CombatOrder::FireAt`. Doctrine and Htn sources never count as external.
