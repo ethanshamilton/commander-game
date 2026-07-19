@@ -4,6 +4,7 @@ use super::domain::{
 };
 use super::state::{AssignedTaskKind, PlannerState};
 use crate::ai::perception::ContactKind;
+use crate::gameplay::spatial::PositionTarget;
 
 const LOW_HEALTH_FRAC: f32 = 0.35;
 pub(crate) const FRESH_CONTACT_TICKS: u64 = 1;
@@ -124,7 +125,7 @@ fn at_active_assigned_station(state: &PlannerState) -> bool {
 
 fn bind_move_to_assigned_station(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        destination_m: state.assigned_task?.station_m,
+        target: state.assigned_task?.station,
     })
 }
 
@@ -132,7 +133,10 @@ fn effect_arrive_at_assigned_station(state: &mut PlannerState) {
     let Some(task) = state.assigned_task else {
         return;
     };
-    state.position_m = task.station_m;
+    state.position_m = task.station.position_m;
+    if let Some(heading) = task.station.heading_radians {
+        state.heading_radians = heading;
+    }
     state.at_assigned_station = true;
     state.has_move_target = true;
 }
@@ -235,7 +239,7 @@ mod tests {
         assert_eq!(
             plan.steps[0].operator,
             BoundOperator::MoveTo {
-                destination_m: Vec2::new(10.0, 0.0)
+                target: PositionTarget::new(Vec2::new(10.0, 0.0), None)
             }
         );
     }
@@ -246,8 +250,8 @@ mod tests {
             mission_id: MissionId(3),
             issued_tick: 7,
             kind: AssignedTaskKind::HoldStation,
-            station_m: Vec2::new(12.0, 4.0),
-            rally_point_m: Vec2::ZERO,
+            station: PositionTarget::new(Vec2::new(12.0, 4.0), Some(0.5)),
+            fallback: PositionTarget::new(Vec2::ZERO, Some(0.5)),
             expires_at: None,
         };
         let moving = PlannerState {
@@ -259,7 +263,7 @@ mod tests {
         assert_eq!(
             moving_plan.steps[0].operator,
             BoundOperator::MoveTo {
-                destination_m: assigned_task.station_m
+                target: assigned_task.station
             }
         );
 
@@ -281,8 +285,8 @@ mod tests {
                 mission_id: MissionId(3),
                 issued_tick: 7,
                 kind: AssignedTaskKind::HoldStation,
-                station_m: Vec2::X,
-                rally_point_m: Vec2::ZERO,
+                station: PositionTarget::new(Vec2::X, None),
+                fallback: PositionTarget::new(Vec2::ZERO, None),
                 expires_at: Some(10),
             }),
             ..Default::default()
@@ -303,7 +307,7 @@ mod tests {
         assert_eq!(
             plan.steps[0].operator,
             BoundOperator::MoveTo {
-                destination_m: Vec2::new(-30.0, 0.0)
+                target: PositionTarget::new(Vec2::new(-30.0, 0.0), None)
             }
         );
     }

@@ -48,10 +48,11 @@ around it, so the decomposition logic is unit-testable without spinning up an
   operator), `advance_plan_execution` (poll the running step, advance or tear
   down the runner). Also owns `HtnDomainRegistry` (`DomainId -> Domain` map)
   and `DomainRef` (which domain a unit plans with).
-- **Expiry fallback** — the newest expired mission/task projects its rally point
-  into planner state. The infantry root prioritizes fallback below survival and
-  fresh-contact engagement but above normal assignments, investigation, and
-  idle behavior. Units move to the rally point and hold until superseded.
+- **Expiry fallback** — the newest expired mission/task projects its assigned
+  fallback `PositionTarget` into planner state. The infantry root prioritizes
+  fallback below survival and fresh-contact engagement but above normal
+  assignments, investigation, and idle behavior. Units move to their formation
+  station, adopt its heading, and hold until superseded.
 - **Arbitration** — provenance-based, not inference-based. See
   `docs/gameplay/orders.md`: a player-sourced order is external for its own
   order lane. Player movement blocks autonomous move/hold writes, but does not

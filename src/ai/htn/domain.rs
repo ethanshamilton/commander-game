@@ -1,5 +1,6 @@
 pub use super::operators::BoundOperator;
 use super::state::PlannerState;
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,13 +189,13 @@ pub fn bind_fire_at_nearest_hostile(state: &PlannerState) -> Option<BoundOperato
 
 pub fn bind_move_to_current_position(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        destination_m: state.position_m,
+        target: PositionTarget::new(state.position_m, None),
     })
 }
 
 pub fn bind_move_to_last_known_hostile_position(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        destination_m: state.nearest_hostile?.position_m,
+        target: PositionTarget::new(state.nearest_hostile?.position_m, None),
     })
 }
 
@@ -202,7 +203,7 @@ pub fn bind_move_30m_away_from_nearest_hostile(state: &PlannerState) -> Option<B
     let hostile = state.nearest_hostile?;
     let away = (state.position_m - hostile.position_m).normalize_or_zero();
     Some(BoundOperator::MoveTo {
-        destination_m: state.position_m + away * 30.0,
+        target: PositionTarget::new(state.position_m + away * 30.0, None),
     })
 }
 

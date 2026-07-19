@@ -40,6 +40,11 @@ leadership behavior. An assigned Hold Line mission activates command behavior
 for its current coordinator. The coordinator and all living direct command
 members are jointly assigned evenly spaced formation stations; the coordinator
 receives a central slot and delegates the other slots one per planning cycle.
+The same decomposition generates a wedge at the mission rally point, reserves
+its anchor for the coordinator, and bundles each member's unique fallback
+station into that member's Hold Station directive. Hold and fallback stations
+are `PositionTarget` poses carrying the shared formation heading, so members
+face back toward the original line after arriving.
 `MissionDelegationProgress` records assignments accepted for transmission so
 replanning is idempotent. The HTN emits `PendingTaskAssignment`; a gameplay
 bridge turns it into `PacketPayload::TaskAssignment` without writing concrete
@@ -55,11 +60,12 @@ replanning.
 
 ## Expiration fallback
 
-At `tick >= expires_at`, normal mission/task execution stops and the assignment's
-rally point becomes the unit's fallback destination. The coordinator and every
-recipient therefore retain the fallback plan even without working comms. HTN
-moves each unit to the rally point and holds there; survival and fresh-contact
-engagement still outrank regrouping. Expired assignment components are retained
+At `tick >= expires_at`, normal mission/task execution stops. The coordinator
+moves to the rally point while each recipient moves to the unique wedge station
+that the coordinator sent with its original task directive. The squad therefore
+retains its fallback formation even without working comms. HTN moves each unit
+to its station and holds there; survival and fresh-contact engagement still
+outrank regrouping. Expired assignment components are retained
 for their rally data until a newer assignment supersedes them, while expired
 player-authored mission plans reject new assignment requests. If stale mission
 and task components coexist, the one with the newer `issued_tick` controls the

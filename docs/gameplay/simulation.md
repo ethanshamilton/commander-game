@@ -17,3 +17,8 @@ The fixed-update phases are chained in this order:
 11. Cleanup
 
 The spatial index is rebuilt from post-movement `BattlefieldPosition` values, so every downstream phase observes one coherent position snapshot for the current tick.
+
+Movement destinations use `PositionTarget`, which pairs a position with an
+optional arrival heading. Units face their direction of travel en route. On
+arrival, movement applies the requested heading before completing the order;
+position-only targets preserve the existing arrival heading.

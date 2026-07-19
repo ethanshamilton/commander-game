@@ -15,6 +15,11 @@ Three sources:
   or combat resolution decaying a spent `FireAt` back to `HoldFire`). Never a
   directive, so it never suppresses planning.
 
+`UnitOrder::MoveTo` carries a `PositionTarget`: an absolute battlefield position
+plus an optional arrival heading. This makes "move to Y and face Z" one atomic
+positioning order. A target without a heading retains ordinary heading-agnostic
+movement semantics.
+
 **Invariant:** `OrderProvenance::<O>` is present if and only if `O` is present
 on the same entity. Every site that inserts, removes, or overwrites an order
 component must do the same to its provenance in the same command batch.

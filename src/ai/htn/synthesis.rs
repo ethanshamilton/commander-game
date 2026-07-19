@@ -12,7 +12,7 @@ use crate::gameplay::missions::{
     TaskDirective,
 };
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
-use crate::gameplay::spatial::BattlefieldPosition;
+use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
 use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;
 use std::cmp::Ordering;
@@ -23,6 +23,7 @@ use std::cmp::Ordering;
 const UNDER_FIRE_CONTACT_MAX_STALENESS_TICKS: u64 = 20;
 const UNDER_FIRE_CONTACT_DISTANCE_M: f32 = 80.0;
 pub const STATION_ARRIVAL_EPSILON_M: f32 = 0.25;
+pub const HEADING_ARRIVAL_EPSILON_RADIANS: f32 = 0.05;
 
 /// Per-unit planning snapshot, refreshed once per tick before Thinking systems run.
 /// This is the unit's belief state — the single input to deliberation, step
@@ -41,6 +42,7 @@ pub fn synthesize_beliefs(
         (
             Entity,
             &BattlefieldPosition,
+            Option<&Heading>,
             &Health,
             &Inventory,
             &PerceptionMemory,
@@ -57,6 +59,7 @@ pub fn synthesize_beliefs(
     for (
         entity,
         position,
+        heading,
         health,
         inventory,
         memory,
@@ -68,9 +71,11 @@ pub fn synthesize_beliefs(
         mut belief,
     ) in &mut units
     {
-        let mut state = synthesize_planner_state(
+        let heading = heading.copied().unwrap_or(Heading(0.0));
+        let mut state = synthesize_planner_state_with_heading(
             &clock,
             position,
+            &heading,
             health,
             inventory,
             memory,
@@ -102,21 +107,19 @@ fn project_task_belief(state: &mut PlannerState, assigned: Option<&AssignedTask>
     match assigned.directive {
         TaskDirective::HoldStation {
             mission_id,
-            station_m,
-            rally_point_m,
+            station,
+            fallback,
             expires_at,
-            ..
         } => {
             state.assigned_task = Some(AssignedTaskBelief {
                 mission_id,
                 issued_tick: assigned.issued_tick,
                 kind: AssignedTaskKind::HoldStation,
-                station_m,
-                rally_point_m,
+                station,
+                fallback,
                 expires_at,
             });
-            state.at_assigned_station =
-                state.position_m.distance(station_m) <= STATION_ARRIVAL_EPSILON_M;
+            state.at_assigned_station = target_is_reached(state, station);
         }
     }
 }
@@ -126,24 +129,22 @@ fn project_expiry_fallback(state: &mut PlannerState) {
     // installed, the newest directive is the unit's current source of intent.
     let fallback = match (state.assigned_mission, state.assigned_task) {
         (Some(mission), Some(task)) if task.issued_tick > mission.issued_tick => {
-            task.expires_at.map(|expiry| (expiry, task.rally_point_m))
+            task.expires_at.map(|expiry| (expiry, task.fallback))
         }
-        (Some(mission), _) => mission
-            .expires_at
-            .map(|expiry| (expiry, mission.rally_point_m)),
-        (None, Some(task)) => task.expires_at.map(|expiry| (expiry, task.rally_point_m)),
+        (Some(mission), _) => mission.expires_at.zip(state.own_fallback_target),
+        (None, Some(task)) => task.expires_at.map(|expiry| (expiry, task.fallback)),
         (None, None) => None,
     };
 
-    let Some((expires_at, rally_point_m)) = fallback else {
+    let Some((expires_at, fallback_target)) = fallback else {
         return;
     };
     if state.tick < expires_at {
         return;
     }
 
-    state.fallback_point_m = Some(rally_point_m);
-    state.at_fallback_point = state.position_m.distance(rally_point_m) <= STATION_ARRIVAL_EPSILON_M;
+    state.fallback_target = Some(fallback_target);
+    state.at_fallback_target = target_is_reached(state, fallback_target);
 }
 
 fn project_mission_belief(
@@ -169,7 +170,7 @@ fn project_mission_belief(
     state.assigned_mission = Some(mission);
     state.has_command_responsibility = true;
 
-    if mission.kind != MissionKind::HoldLine || state.mission_is_expired() {
+    if mission.kind != MissionKind::HoldLine {
         return;
     }
     let MissionArea::Line { from_m, to_m } = mission.area else {
@@ -182,29 +183,69 @@ fn project_mission_belief(
         .copied()
         .filter(|subordinate| living_soldiers.get(*subordinate).is_ok())
         .collect();
-    let assignments = decompose_hold_line(from_m, to_m, entity, &subordinates);
+    let assignments =
+        decompose_hold_line(from_m, to_m, mission.rally_point_m, entity, &subordinates);
     let delegated = progress
         .filter(|progress| progress.mission == Some(mission.identity()))
         .map(|progress| progress.delegated_to.as_slice())
         .unwrap_or(&[]);
 
     state.delegated_assignees = delegated.to_vec();
-    state.own_mission_station_m = assignments
+    let own_assignment = assignments
         .iter()
-        .find(|assignment| assignment.assignee == entity)
-        .map(|assignment| assignment.station_m);
-    state.at_own_mission_station = state
-        .own_mission_station_m
-        .is_some_and(|station| state.position_m.distance(station) <= STATION_ARRIVAL_EPSILON_M);
+        .find(|assignment| assignment.assignee == entity);
+    state.own_mission_target = own_assignment.map(|assignment| assignment.station);
+    state.own_fallback_target = own_assignment.map(|assignment| assignment.fallback);
+    state.at_own_mission_target = state
+        .own_mission_target
+        .is_some_and(|target| target_is_reached(state, target));
+
+    if state.mission_is_expired() {
+        return;
+    }
+
     state.next_hold_station = assignments.iter().copied().find(|assignment| {
         assignment.assignee != entity && !delegated.contains(&assignment.assignee)
     });
     state.mission_delegation_complete = state.next_hold_station.is_none();
 }
 
+fn target_is_reached(state: &PlannerState, target: PositionTarget) -> bool {
+    target.is_reached(
+        state.position_m,
+        state.heading_radians,
+        STATION_ARRIVAL_EPSILON_M,
+        HEADING_ARRIVAL_EPSILON_RADIANS,
+    )
+}
+
 pub fn synthesize_planner_state(
     clock: &SimulationClock,
     position: &BattlefieldPosition,
+    health: &Health,
+    inventory: &Inventory,
+    memory: &PerceptionMemory,
+    auditory_sensor: Option<&AuditorySensor>,
+    current_order: Option<&UnitOrder>,
+    recent_shots: &[ResolvedShot],
+) -> PlannerState {
+    synthesize_planner_state_with_heading(
+        clock,
+        position,
+        &Heading(0.0),
+        health,
+        inventory,
+        memory,
+        auditory_sensor,
+        current_order,
+        recent_shots,
+    )
+}
+
+fn synthesize_planner_state_with_heading(
+    clock: &SimulationClock,
+    position: &BattlefieldPosition,
+    heading: &Heading,
     health: &Health,
     inventory: &Inventory,
     memory: &PerceptionMemory,
@@ -218,6 +259,7 @@ pub fn synthesize_planner_state(
 
     PlannerState {
         position_m: position.0,
+        heading_radians: heading.0,
         health_frac: health_fraction(health),
         has_ammo: inventory.has_ammo(),
         nearest_hostile,
@@ -647,9 +689,8 @@ mod tests {
         let assigned = AssignedTask {
             directive: TaskDirective::HoldStation {
                 mission_id: crate::gameplay::missions::MissionId(4),
-                station_m: Vec2::new(5.0, 0.0),
-                facing_radians: None,
-                rally_point_m: Vec2::ZERO,
+                station: PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.0)),
+                fallback: PositionTarget::new(Vec2::new(-5.0, 0.0), Some(1.0)),
                 expires_at: Some(12),
             },
             assigned_by: Entity::PLACEHOLDER,
@@ -667,14 +708,25 @@ mod tests {
         assert!(state.at_assigned_station);
         assert!(!state.assigned_task_is_expired());
         assert_eq!(state.assigned_task.unwrap().issued_tick, 9);
+
+        state.heading_radians = 0.5;
+        project_task_belief(&mut state, Some(&assigned));
+        assert!(!state.at_assigned_station);
+        state.heading_radians = 0.0;
+        project_task_belief(&mut state, Some(&assigned));
+        assert!(state.at_assigned_station);
+
         project_expiry_fallback(&mut state);
-        assert_eq!(state.fallback_point_m, None);
+        assert_eq!(state.fallback_target, None);
 
         state.tick = 12;
         assert!(state.assigned_task_is_expired());
         project_expiry_fallback(&mut state);
-        assert_eq!(state.fallback_point_m, Some(Vec2::ZERO));
-        assert!(!state.at_fallback_point);
+        assert_eq!(
+            state.fallback_target,
+            Some(PositionTarget::new(Vec2::new(-5.0, 0.0), Some(1.0)))
+        );
+        assert!(!state.at_fallback_target);
     }
 
     #[test]
@@ -697,8 +749,8 @@ mod tests {
                 mission_id: crate::gameplay::missions::MissionId(2),
                 issued_tick: 11,
                 kind: AssignedTaskKind::HoldStation,
-                station_m: Vec2::X,
-                rally_point_m: Vec2::new(10.0, 0.0),
+                station: PositionTarget::new(Vec2::X, None),
+                fallback: PositionTarget::new(Vec2::new(10.0, 0.0), None),
                 expires_at: Some(20),
             }),
             ..Default::default()
@@ -706,8 +758,11 @@ mod tests {
 
         project_expiry_fallback(&mut state);
 
-        assert_eq!(state.fallback_point_m, Some(Vec2::new(10.0, 0.0)));
-        assert!(state.at_fallback_point);
+        assert_eq!(
+            state.fallback_target,
+            Some(PositionTarget::new(Vec2::new(10.0, 0.0), None))
+        );
+        assert!(state.at_fallback_target);
     }
 
     #[test]
@@ -729,7 +784,7 @@ mod tests {
             &memory,
             None,
             Some(&UnitOrder::MoveTo {
-                destination_m: Vec2::new(1.0, 0.0),
+                target: PositionTarget::new(Vec2::new(1.0, 0.0), None),
             }),
             &[],
         );
@@ -773,7 +828,7 @@ mod tests {
                 inventory_with_ammo(5),
                 AuditorySensor { range_m: 40.0 },
                 UnitOrder::MoveTo {
-                    destination_m: Vec2::new(3.0, 4.0),
+                    target: PositionTarget::new(Vec2::new(3.0, 4.0), None),
                 },
                 PerceptionMemory {
                     contacts: vec![contact(

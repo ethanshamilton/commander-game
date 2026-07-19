@@ -12,6 +12,7 @@ use crate::gameplay::missions::{
 };
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet, UnitOrder};
+use crate::gameplay::spatial::PositionTarget;
 use crate::intel::ReportedLifeStatus;
 use crate::player::knowledge::PlayerControlledUnit;
 use bevy::prelude::*;
@@ -1019,7 +1020,7 @@ mod tests {
         link(&mut world, player, subordinate);
 
         let order = UnitOrder::MoveTo {
-            destination_m: Vec2::new(10.0, 20.0),
+            target: PositionTarget::new(Vec2::new(10.0, 20.0), None),
         };
         world
             .get_mut::<Outbox>(player)
@@ -1175,9 +1176,8 @@ mod tests {
         insert_command_forest(&mut world, leader, subordinate);
         let directive = TaskDirective::HoldStation {
             mission_id: MissionId(2),
-            station_m: Vec2::new(4.0, 5.0),
-            facing_radians: None,
-            rally_point_m: Vec2::ZERO,
+            station: PositionTarget::new(Vec2::new(4.0, 5.0), Some(0.5)),
+            fallback: PositionTarget::new(Vec2::ZERO, Some(0.5)),
             expires_at: Some(20),
         };
         world
@@ -1222,9 +1222,8 @@ mod tests {
         insert_command_forest(&mut world, leader, subordinate);
         let directive = TaskDirective::HoldStation {
             mission_id: MissionId(2),
-            station_m: Vec2::X,
-            facing_radians: None,
-            rally_point_m: Vec2::ZERO,
+            station: PositionTarget::new(Vec2::X, None),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
         };
         world.entity_mut(subordinate).insert(AssignedTask {
@@ -1265,9 +1264,8 @@ mod tests {
                     payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
                         directive: TaskDirective::HoldStation {
                             mission_id: MissionId(2),
-                            station_m: Vec2::X,
-                            facing_radians: None,
-                            rally_point_m: Vec2::ZERO,
+                            station: PositionTarget::new(Vec2::X, None),
+                            fallback: PositionTarget::new(Vec2::ZERO, None),
                             expires_at: Some(10),
                         },
                         issued_tick: 10,

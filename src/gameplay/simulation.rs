@@ -3,7 +3,7 @@
 use crate::GameState;
 use crate::actors::units::{Alive, Mobility, Soldier};
 use crate::gameplay::orders::UnitOrderSource;
-use crate::gameplay::spatial::{BattlefieldPosition, Heading};
+use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
 use bevy::prelude::*;
 
 pub const SIMULATION_TICK_HZ: f64 = 20.0;
@@ -86,7 +86,7 @@ impl Default for SimulationClock {
 #[allow(dead_code)]
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub enum UnitOrder {
-    MoveTo { destination_m: Vec2 },
+    MoveTo { target: PositionTarget },
     Hold,
 }
 
@@ -126,14 +126,17 @@ fn move_units(
     let dt = clock.tick_dt_s * clock.speed;
 
     for (entity, mut position, mut heading, mobility, order) in &mut units {
-        let UnitOrder::MoveTo { destination_m } = *order else {
+        let UnitOrder::MoveTo { target } = *order else {
             continue;
         };
 
-        let offset = destination_m - position.0;
+        let offset = target.position_m - position.0;
         let distance_m = offset.length();
 
         if distance_m <= f32::EPSILON {
+            if let Some(arrival_heading) = target.heading_radians {
+                heading.0 = arrival_heading;
+            }
             commands
                 .entity(entity)
                 .remove::<(UnitOrder, UnitOrderSource)>();
@@ -142,7 +145,10 @@ fn move_units(
 
         let max_step_m = mobility.speed.max(0) as f32 * dt;
         if distance_m <= max_step_m {
-            position.0 = destination_m;
+            position.0 = target.position_m;
+            if let Some(arrival_heading) = target.heading_radians {
+                heading.0 = arrival_heading;
+            }
             commands
                 .entity(entity)
                 .remove::<(UnitOrder, UnitOrderSource)>();
@@ -151,5 +157,57 @@ fn move_units(
             position.0 += direction * max_step_m;
             heading.0 = direction.to_angle();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actors::units::{Rank, Role};
+    use bevy::ecs::system::RunSystemOnce;
+
+    fn unit_at_target(world: &mut World, heading: f32, arrival_heading: Option<f32>) -> Entity {
+        world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Mobility { speed: 1 },
+                BattlefieldPosition(Vec2::ZERO),
+                Heading(heading),
+                UnitOrder::MoveTo {
+                    target: PositionTarget::new(Vec2::ZERO, arrival_heading),
+                },
+                UnitOrderSource::htn(),
+            ))
+            .id()
+    }
+
+    #[test]
+    fn arrival_heading_is_applied_before_move_order_completes() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock::default());
+        let entity = unit_at_target(&mut world, 0.0, Some(1.25));
+
+        world.run_system_once(move_units).unwrap();
+        world.flush();
+
+        assert_eq!(world.get::<Heading>(entity).unwrap().0, 1.25);
+        assert!(world.get::<UnitOrder>(entity).is_none());
+        assert!(world.get::<UnitOrderSource>(entity).is_none());
+    }
+
+    #[test]
+    fn position_only_arrival_preserves_existing_heading() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock::default());
+        let entity = unit_at_target(&mut world, 0.75, None);
+
+        world.run_system_once(move_units).unwrap();
+        world.flush();
+
+        assert_eq!(world.get::<Heading>(entity).unwrap().0, 0.75);
     }
 }

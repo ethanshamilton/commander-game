@@ -4,6 +4,7 @@ use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::missions::{MissionId, PendingTaskAssignment, TaskDirective};
 use crate::gameplay::orders::{CombatOrderSource, UnitOrderSource};
 use crate::gameplay::simulation::UnitOrder;
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
 const MOVE_DESTINATION_EPSILON_M: f32 = 0.05;
@@ -15,7 +16,7 @@ const MOVE_DESTINATION_EPSILON_M: f32 = 0.05;
 pub enum BoundOperator {
     Hold,
     MoveTo {
-        destination_m: Vec2,
+        target: PositionTarget,
     },
     FireAt {
         target: Entity,
@@ -24,8 +25,8 @@ pub enum BoundOperator {
         mission_id: MissionId,
         mission_issued_tick: u64,
         assignee: Entity,
-        station_m: Vec2,
-        rally_point_m: Vec2,
+        station: PositionTarget,
+        fallback: PositionTarget,
         expires_at: Option<u64>,
     },
 }
@@ -44,17 +45,22 @@ impl BoundOperator {
     pub fn describe(&self) -> String {
         match self {
             BoundOperator::Hold => "hold position / hold fire".to_string(),
-            BoundOperator::MoveTo { destination_m } => {
-                format!("move to ({:.1}, {:.1})m", destination_m.x, destination_m.y)
-            }
+            BoundOperator::MoveTo { target } => match target.heading_radians {
+                Some(heading) => format!(
+                    "move to ({:.1}, {:.1})m facing {:.2}rad",
+                    target.position_m.x, target.position_m.y, heading
+                ),
+                None => format!(
+                    "move to ({:.1}, {:.1})m",
+                    target.position_m.x, target.position_m.y
+                ),
+            },
             BoundOperator::FireAt { target } => format!("fire at {target:?}"),
             BoundOperator::DelegateHoldStation {
-                assignee,
-                station_m,
-                ..
+                assignee, station, ..
             } => format!(
                 "delegate hold station ({:.1}, {:.1})m to {assignee:?}",
-                station_m.x, station_m.y
+                station.position_m.x, station.position_m.y
             ),
         }
     }
@@ -71,10 +77,10 @@ impl BoundOperator {
                     CombatOrderSource::htn(),
                 ));
             }
-            BoundOperator::MoveTo { destination_m } => {
+            BoundOperator::MoveTo { target } => {
                 commands
                     .entity(entity)
-                    .insert((UnitOrder::MoveTo { destination_m }, UnitOrderSource::htn()));
+                    .insert((UnitOrder::MoveTo { target }, UnitOrderSource::htn()));
             }
             BoundOperator::FireAt { target } => {
                 commands
@@ -85,8 +91,8 @@ impl BoundOperator {
                 mission_id,
                 mission_issued_tick,
                 assignee,
-                station_m,
-                rally_point_m,
+                station,
+                fallback,
                 expires_at,
             } => {
                 commands.entity(entity).insert(PendingTaskAssignment {
@@ -94,9 +100,8 @@ impl BoundOperator {
                     assignee,
                     directive: TaskDirective::HoldStation {
                         mission_id,
-                        station_m,
-                        facing_radians: None,
-                        rally_point_m,
+                        station,
+                        fallback,
                         expires_at,
                     },
                 });
@@ -113,7 +118,7 @@ impl BoundOperator {
     ) -> StepPoll {
         match *self {
             BoundOperator::Hold => StepPoll::Running,
-            BoundOperator::MoveTo { destination_m } => poll_move(destination_m, unit_order),
+            BoundOperator::MoveTo { target } => poll_move(target, unit_order),
             BoundOperator::FireAt { target } => poll_fire(target, combat_order, state),
             BoundOperator::DelegateHoldStation {
                 mission_id,
@@ -136,16 +141,24 @@ impl BoundOperator {
     }
 }
 
-fn poll_move(destination_m: Vec2, current_order: Option<&UnitOrder>) -> StepPoll {
+fn poll_move(target: PositionTarget, current_order: Option<&UnitOrder>) -> StepPoll {
     match current_order {
         None => StepPoll::Succeeded,
-        Some(UnitOrder::MoveTo {
-            destination_m: current,
-        }) => {
-            if current.distance(destination_m) <= MOVE_DESTINATION_EPSILON_M {
+        Some(UnitOrder::MoveTo { target: current }) => {
+            let same_position =
+                current.position_m.distance(target.position_m) <= MOVE_DESTINATION_EPSILON_M;
+            let same_heading = match (current.heading_radians, target.heading_radians) {
+                (Some(current), Some(target)) => {
+                    crate::gameplay::spatial::angular_distance(current, target)
+                        <= MOVE_DESTINATION_EPSILON_M
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            if same_position && same_heading {
                 StepPoll::Running
             } else {
-                StepPoll::Failed("move order destination changed")
+                StepPoll::Failed("move order target changed")
             }
         }
         Some(UnitOrder::Hold) => StepPoll::Failed("move order replaced by hold"),
@@ -184,7 +197,7 @@ mod tests {
     #[test]
     fn move_succeeds_when_order_removed() {
         let op = BoundOperator::MoveTo {
-            destination_m: Vec2::new(1.0, 0.0),
+            target: PositionTarget::new(Vec2::new(1.0, 0.0), None),
         };
         let state = PlannerState::default();
 
@@ -193,10 +206,10 @@ mod tests {
 
     #[test]
     fn move_keeps_running_while_destination_matches() {
-        let destination_m = Vec2::new(1.0, 0.0);
-        let op = BoundOperator::MoveTo { destination_m };
+        let target = PositionTarget::new(Vec2::new(1.0, 0.0), Some(1.0));
+        let op = BoundOperator::MoveTo { target };
         let state = PlannerState::default();
-        let order = UnitOrder::MoveTo { destination_m };
+        let order = UnitOrder::MoveTo { target };
 
         assert_eq!(op.poll(&state, Some(&order), None), StepPoll::Running);
     }

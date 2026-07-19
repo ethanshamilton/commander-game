@@ -6,6 +6,7 @@ pub mod command;
 pub mod comms;
 pub mod debug_powers;
 pub mod diagnostics;
+pub mod formations;
 pub mod lifecycle;
 pub mod map;
 pub mod measurements;

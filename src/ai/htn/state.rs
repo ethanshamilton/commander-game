@@ -1,5 +1,6 @@
 use crate::ai::perception::ContactKind;
 use crate::gameplay::missions::{MissionArea, MissionId, MissionKind};
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
 /// Compact planning snapshot synthesized from a unit's own memory and components.
@@ -10,6 +11,7 @@ use bevy::prelude::*;
 #[derive(Debug, Clone)]
 pub struct PlannerState {
     pub position_m: Vec2,
+    pub heading_radians: f32,
     pub health_frac: f32,
     pub has_ammo: bool,
     pub nearest_hostile: Option<HostileBelief>,
@@ -21,13 +23,14 @@ pub struct PlannerState {
     pub mission_delegation_complete: bool,
     pub delegated_assignees: Vec<Entity>,
     pub has_command_responsibility: bool,
-    pub own_mission_station_m: Option<Vec2>,
-    pub at_own_mission_station: bool,
+    pub own_mission_target: Option<PositionTarget>,
+    pub own_fallback_target: Option<PositionTarget>,
+    pub at_own_mission_target: bool,
     pub assigned_task: Option<AssignedTaskBelief>,
     pub at_assigned_station: bool,
-    /// Rally point from the newest expired mission/task assignment.
-    pub fallback_point_m: Option<Vec2>,
-    pub at_fallback_point: bool,
+    /// Pose from the newest expired mission/task assignment.
+    pub fallback_target: Option<PositionTarget>,
+    pub at_fallback_target: bool,
 }
 
 impl PlannerState {
@@ -60,7 +63,7 @@ impl PlannerState {
     }
 
     pub fn fallback_is_active(&self) -> bool {
-        self.fallback_point_m.is_some()
+        self.fallback_target.is_some()
     }
 }
 
@@ -92,8 +95,8 @@ pub struct AssignedTaskBelief {
     pub mission_id: MissionId,
     pub issued_tick: u64,
     pub kind: AssignedTaskKind,
-    pub station_m: Vec2,
-    pub rally_point_m: Vec2,
+    pub station: PositionTarget,
+    pub fallback: PositionTarget,
     pub expires_at: Option<u64>,
 }
 
@@ -106,7 +109,8 @@ impl AssignedTaskBelief {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HoldStationAssignment {
     pub assignee: Entity,
-    pub station_m: Vec2,
+    pub station: PositionTarget,
+    pub fallback: PositionTarget,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,6 +126,7 @@ impl Default for PlannerState {
     fn default() -> Self {
         Self {
             position_m: Vec2::ZERO,
+            heading_radians: 0.0,
             health_frac: 1.0,
             has_ammo: false,
             nearest_hostile: None,
@@ -133,12 +138,13 @@ impl Default for PlannerState {
             mission_delegation_complete: false,
             delegated_assignees: Vec::new(),
             has_command_responsibility: false,
-            own_mission_station_m: None,
-            at_own_mission_station: false,
+            own_mission_target: None,
+            own_fallback_target: None,
+            at_own_mission_target: false,
             assigned_task: None,
             at_assigned_station: false,
-            fallback_point_m: None,
-            at_fallback_point: false,
+            fallback_target: None,
+            at_fallback_target: false,
         }
     }
 }
@@ -164,13 +170,13 @@ pub struct PlannerStateDigest {
     pub next_hold_station_dm: Option<(i32, i32)>,
     pub mission_delegation_complete: bool,
     pub has_command_responsibility: bool,
-    pub own_mission_station_dm: Option<(i32, i32)>,
-    pub at_own_mission_station: bool,
+    pub own_mission_target: Option<PositionTargetDigest>,
+    pub at_own_mission_target: bool,
     pub assigned_task: Option<(MissionId, u64)>,
     pub assigned_task_expired: bool,
     pub at_assigned_station: bool,
-    pub fallback_point_dm: Option<(i32, i32)>,
-    pub at_fallback_point: bool,
+    pub fallback_target: Option<PositionTargetDigest>,
+    pub at_fallback_target: bool,
 }
 
 impl PlannerStateDigest {
@@ -187,16 +193,33 @@ impl PlannerStateDigest {
             next_hold_station_assignee: state.next_hold_station.map(|next| next.assignee),
             next_hold_station_dm: state
                 .next_hold_station
-                .map(|next| quantize_decimeters(next.station_m)),
+                .map(|next| quantize_decimeters(next.station.position_m)),
             mission_delegation_complete: state.mission_delegation_complete,
             has_command_responsibility: state.has_command_responsibility,
-            own_mission_station_dm: state.own_mission_station_m.map(quantize_decimeters),
-            at_own_mission_station: state.at_own_mission_station,
+            own_mission_target: state.own_mission_target.map(PositionTargetDigest::from),
+            at_own_mission_target: state.at_own_mission_target,
             assigned_task: state.assigned_task.map(AssignedTaskBelief::identity),
             assigned_task_expired: state.assigned_task_is_expired(),
             at_assigned_station: state.at_assigned_station,
-            fallback_point_dm: state.fallback_point_m.map(quantize_decimeters),
-            at_fallback_point: state.at_fallback_point,
+            fallback_target: state.fallback_target.map(PositionTargetDigest::from),
+            at_fallback_target: state.at_fallback_target,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PositionTargetDigest {
+    pub position_dm: (i32, i32),
+    pub heading_centiradians: Option<i16>,
+}
+
+impl From<PositionTarget> for PositionTargetDigest {
+    fn from(target: PositionTarget) -> Self {
+        Self {
+            position_dm: quantize_decimeters(target.position_m),
+            heading_centiradians: target
+                .heading_radians
+                .map(|heading| (heading * 100.0).round() as i16),
         }
     }
 }

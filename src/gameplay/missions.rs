@@ -5,6 +5,7 @@ use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::packets::{Address, Outbox, PacketIdAllocator, PacketPayload, SeenPackets};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
 /// Tactical missions are persistent intent-bearing plans created during a
@@ -267,9 +268,8 @@ pub struct MissionAssignmentRequested {
 pub enum TaskDirective {
     HoldStation {
         mission_id: MissionId,
-        station_m: Vec2,
-        facing_radians: Option<f32>,
-        rally_point_m: Vec2,
+        station: PositionTarget,
+        fallback: PositionTarget,
         expires_at: Option<u64>,
     },
 }
@@ -278,20 +278,10 @@ impl TaskDirective {
     pub fn validate(self) -> Result<(), TaskValidationError> {
         match self {
             Self::HoldStation {
-                station_m,
-                facing_radians,
-                rally_point_m,
-                ..
+                station, fallback, ..
             } => {
-                if !station_m.is_finite() {
-                    return Err(TaskValidationError::NonFinitePoint("hold station"));
-                }
-                if !rally_point_m.is_finite() {
-                    return Err(TaskValidationError::NonFinitePoint("task rally point"));
-                }
-                if facing_radians.is_some_and(|facing| !facing.is_finite()) {
-                    return Err(TaskValidationError::NonFiniteFacing);
-                }
+                validate_position_target("hold station", station)?;
+                validate_position_target("fallback station", fallback)?;
             }
         }
         Ok(())
@@ -313,7 +303,23 @@ impl TaskDirective {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskValidationError {
     NonFinitePoint(&'static str),
-    NonFiniteFacing,
+    NonFiniteFacing(&'static str),
+}
+
+fn validate_position_target(
+    field: &'static str,
+    target: PositionTarget,
+) -> Result<(), TaskValidationError> {
+    if !target.position_m.is_finite() {
+        return Err(TaskValidationError::NonFinitePoint(field));
+    }
+    if target
+        .heading_radians
+        .is_some_and(|heading| !heading.is_finite())
+    {
+        return Err(TaskValidationError::NonFiniteFacing(field));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -731,9 +737,8 @@ mod tests {
     fn task_validation_rejects_non_finite_directive_fields() {
         let invalid_station = TaskDirective::HoldStation {
             mission_id: MissionId(1),
-            station_m: Vec2::new(f32::NAN, 0.0),
-            facing_radians: None,
-            rally_point_m: Vec2::ZERO,
+            station: PositionTarget::new(Vec2::new(f32::NAN, 0.0), None),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
         };
         assert_eq!(
@@ -741,16 +746,26 @@ mod tests {
             Err(TaskValidationError::NonFinitePoint("hold station"))
         );
 
+        let invalid_fallback = TaskDirective::HoldStation {
+            mission_id: MissionId(1),
+            station: PositionTarget::new(Vec2::ZERO, None),
+            fallback: PositionTarget::new(Vec2::new(f32::INFINITY, 0.0), None),
+            expires_at: None,
+        };
+        assert_eq!(
+            invalid_fallback.validate(),
+            Err(TaskValidationError::NonFinitePoint("fallback station"))
+        );
+
         let invalid_facing = TaskDirective::HoldStation {
             mission_id: MissionId(1),
-            station_m: Vec2::ZERO,
-            facing_radians: Some(f32::INFINITY),
-            rally_point_m: Vec2::ZERO,
+            station: PositionTarget::new(Vec2::ZERO, Some(f32::INFINITY)),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
         };
         assert_eq!(
             invalid_facing.validate(),
-            Err(TaskValidationError::NonFiniteFacing)
+            Err(TaskValidationError::NonFiniteFacing("hold station"))
         );
     }
 
@@ -770,9 +785,8 @@ mod tests {
             .id();
         let directive = TaskDirective::HoldStation {
             mission_id: MissionId(7),
-            station_m: Vec2::X,
-            facing_radians: None,
-            rally_point_m: Vec2::NEG_Y,
+            station: PositionTarget::new(Vec2::X, Some(0.5)),
+            fallback: PositionTarget::new(Vec2::NEG_Y, Some(0.5)),
             expires_at: None,
         };
         let leader = world

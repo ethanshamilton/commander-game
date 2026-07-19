@@ -11,6 +11,7 @@ use crate::gameplay::orders::{
     CombatOrderSource, UnitOrderSource, clear_if_htn, is_player_sourced,
 };
 use crate::gameplay::simulation::{SimulationSet, UnitOrder};
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -974,7 +975,7 @@ mod tests {
             always,
             |_| {
                 Some(BoundOperator::MoveTo {
-                    destination_m: Vec2::new(1.0, 0.0),
+                    target: PositionTarget::new(Vec2::new(1.0, 0.0), None),
                 })
             },
             no_effect,
@@ -1040,7 +1041,7 @@ mod tests {
             always,
             |_| {
                 Some(BoundOperator::MoveTo {
-                    destination_m: Vec2::new(1.0, 0.0),
+                    target: PositionTarget::new(Vec2::new(1.0, 0.0), None),
                 })
             },
             no_effect,
@@ -1048,7 +1049,7 @@ mod tests {
         let domain = builder.build(mov);
         let plan = plan(&domain, &PlannerState::default()).unwrap();
         let player_order = UnitOrder::MoveTo {
-            destination_m: Vec2::new(5.0, 0.0),
+            target: PositionTarget::new(Vec2::new(5.0, 0.0), None),
         };
         let entity = app.world_mut().spawn((
             Soldier {
@@ -1138,7 +1139,7 @@ mod tests {
 
         let target = Entity::from_raw_u32(99).unwrap();
         let player_order = UnitOrder::MoveTo {
-            destination_m: Vec2::new(5.0, 0.0),
+            target: PositionTarget::new(Vec2::new(5.0, 0.0), None),
         };
         let entity = spawn_autonomous(app.world_mut());
         app.world_mut().entity_mut(entity).insert((
@@ -1192,7 +1193,7 @@ mod tests {
         let domain = test_domain();
         let running_plan = plan(&domain, &PlannerState::default()).unwrap();
         let player_order = UnitOrder::MoveTo {
-            destination_m: Vec2::new(3.0, 4.0),
+            target: PositionTarget::new(Vec2::new(3.0, 4.0), None),
         };
 
         let entity = app.world_mut().spawn((

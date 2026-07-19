@@ -4,8 +4,12 @@ use super::soldier::{
     low_health_with_hostile, stale_recent_hostile,
 };
 use super::state::{HoldStationAssignment, PlannerState};
+use crate::gameplay::formations::{FormationKind, FormationSpec, generate_formation_positions};
 use crate::gameplay::missions::{MissionArea, MissionKind};
+use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
+
+const FALLBACK_FORMATION_SPACING_M: f32 = 3.0;
 
 pub struct LeadershipTasks {
     pub execute_mission: TaskId,
@@ -147,25 +151,28 @@ fn fallback_active(state: &PlannerState) -> bool {
 }
 
 fn fallback_needs_movement(state: &PlannerState) -> bool {
-    fallback_active(state) && !state.at_fallback_point
+    fallback_active(state) && !state.at_fallback_target
 }
 
 fn at_active_fallback(state: &PlannerState) -> bool {
-    fallback_active(state) && state.at_fallback_point
+    fallback_active(state) && state.at_fallback_target
 }
 
 fn bind_move_to_fallback(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        destination_m: state.fallback_point_m?,
+        target: state.fallback_target?,
     })
 }
 
 fn effect_arrive_at_fallback(state: &mut PlannerState) {
-    let Some(fallback_point_m) = state.fallback_point_m else {
+    let Some(target) = state.fallback_target else {
         return;
     };
-    state.position_m = fallback_point_m;
-    state.at_fallback_point = true;
+    state.position_m = target.position_m;
+    if let Some(heading) = target.heading_radians {
+        state.heading_radians = heading;
+    }
+    state.at_fallback_target = true;
     state.has_move_target = true;
 }
 
@@ -185,29 +192,32 @@ fn has_next_hold_station(state: &PlannerState) -> bool {
 fn should_move_to_own_mission_station(state: &PlannerState) -> bool {
     active_hold_line_mission(state)
         && state.mission_delegation_complete
-        && state.own_mission_station_m.is_some()
-        && !state.at_own_mission_station
+        && state.own_mission_target.is_some()
+        && !state.at_own_mission_target
 }
 
 fn at_own_active_mission_station(state: &PlannerState) -> bool {
     active_hold_line_mission(state)
         && state.mission_delegation_complete
-        && state.own_mission_station_m.is_some()
-        && state.at_own_mission_station
+        && state.own_mission_target.is_some()
+        && state.at_own_mission_target
 }
 
 fn bind_move_to_own_mission_station(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        destination_m: state.own_mission_station_m?,
+        target: state.own_mission_target?,
     })
 }
 
 fn effect_arrive_at_own_mission_station(state: &mut PlannerState) {
-    let Some(station_m) = state.own_mission_station_m else {
+    let Some(target) = state.own_mission_target else {
         return;
     };
-    state.position_m = station_m;
-    state.at_own_mission_station = true;
+    state.position_m = target.position_m;
+    if let Some(heading) = target.heading_radians {
+        state.heading_radians = heading;
+    }
+    state.at_own_mission_target = true;
     state.has_move_target = true;
 }
 
@@ -218,8 +228,8 @@ fn bind_next_hold_station(state: &PlannerState) -> Option<BoundOperator> {
         mission_id: mission.id,
         mission_issued_tick: mission.issued_tick,
         assignee: assignment.assignee,
-        station_m: assignment.station_m,
-        rally_point_m: mission.rally_point_m,
+        station: assignment.station,
+        fallback: assignment.fallback,
         expires_at: mission.expires_at,
     })
 }
@@ -239,6 +249,7 @@ fn mark_next_station_delegated_in_simulation(state: &mut PlannerState) {
 pub fn decompose_hold_line(
     from_m: Vec2,
     to_m: Vec2,
+    rally_point_m: Vec2,
     coordinator: Entity,
     other_participants: &[Entity],
 ) -> Vec<HoldStationAssignment> {
@@ -248,25 +259,59 @@ pub fn decompose_hold_line(
     others.retain(|entity| *entity != coordinator);
 
     let participant_count = others.len() + 1;
-    if participant_count == 1 {
-        return vec![HoldStationAssignment {
-            assignee: coordinator,
-            station_m: (from_m + to_m) / 2.0,
-        }];
-    }
+    let formation_heading = fallback_facing(from_m, to_m, rally_point_m);
+    let formation_positions = generate_formation_positions(
+        FormationSpec {
+            kind: FormationKind::Wedge,
+            anchor_m: rally_point_m,
+            facing_radians: formation_heading,
+            lateral_spacing_m: FALLBACK_FORMATION_SPACING_M,
+            depth_spacing_m: FALLBACK_FORMATION_SPACING_M,
+        },
+        participant_count,
+    )
+    .expect("validated Hold Line geometry produces a valid fallback formation");
+    let fallback_assignments: Vec<_> = std::iter::once(coordinator)
+        .chain(others.iter().copied())
+        .zip(formation_positions)
+        .collect();
 
     let coordinator_slot = (participant_count - 1) / 2;
-    let mut others = others.into_iter();
+    let mut line_others = others.into_iter();
     (0..participant_count)
-        .map(|index| HoldStationAssignment {
-            assignee: if index == coordinator_slot {
+        .map(|index| {
+            let assignee = if index == coordinator_slot {
                 coordinator
             } else {
-                others.next().expect("one participant per non-command slot")
-            },
-            station_m: from_m.lerp(to_m, index as f32 / (participant_count - 1) as f32),
+                line_others
+                    .next()
+                    .expect("one participant per non-command slot")
+            };
+            let station_position_m = if participant_count == 1 {
+                (from_m + to_m) / 2.0
+            } else {
+                from_m.lerp(to_m, index as f32 / (participant_count - 1) as f32)
+            };
+            let fallback_position_m = fallback_assignments
+                .iter()
+                .find_map(|(member, station)| (*member == assignee).then_some(*station))
+                .expect("every Hold Line participant has a fallback formation station");
+            HoldStationAssignment {
+                assignee,
+                station: PositionTarget::new(station_position_m, Some(formation_heading)),
+                fallback: PositionTarget::new(fallback_position_m, Some(formation_heading)),
+            }
         })
         .collect()
+}
+
+fn fallback_facing(from_m: Vec2, to_m: Vec2, rally_point_m: Vec2) -> f32 {
+    let toward_line = (from_m + to_m) / 2.0 - rally_point_m;
+    if toward_line.length_squared() > f32::EPSILON {
+        toward_line.to_angle()
+    } else {
+        (to_m - from_m).perp().to_angle()
+    }
 }
 
 #[cfg(test)]
@@ -286,6 +331,7 @@ mod tests {
         let assignments = decompose_hold_line(
             Vec2::new(-10.0, 0.0),
             Vec2::new(10.0, 0.0),
+            Vec2::new(0.0, -10.0),
             coordinator,
             &[c, a, b],
         );
@@ -295,16 +341,48 @@ mod tests {
             vec![a, coordinator, b, c]
         );
         for pair in assignments.windows(2) {
-            assert!((pair[1].station_m.x - pair[0].station_m.x - 20.0 / 3.0).abs() < 0.001);
+            assert!(
+                (pair[1].station.position_m.x - pair[0].station.position_m.x - 20.0 / 3.0).abs()
+                    < 0.001
+            );
         }
+        for (index, assignment) in assignments.iter().enumerate() {
+            assert!(assignments[index + 1..].iter().all(|other| {
+                assignment
+                    .fallback
+                    .position_m
+                    .distance_squared(other.fallback.position_m)
+                    > f32::EPSILON
+            }));
+        }
+        assert_eq!(
+            assignments
+                .iter()
+                .find(|assignment| assignment.assignee == coordinator)
+                .unwrap()
+                .fallback
+                .position_m,
+            Vec2::new(0.0, -10.0)
+        );
+        assert!(assignments.iter().all(|assignment| {
+            assignment.station.heading_radians == Some(std::f32::consts::FRAC_PI_2)
+                && assignment.fallback.heading_radians == Some(std::f32::consts::FRAC_PI_2)
+        }));
     }
 
     #[test]
     fn lone_coordinator_receives_the_midpoint() {
         let coordinator = Entity::from_raw_u32(1).unwrap();
-        let assignments = decompose_hold_line(Vec2::ZERO, Vec2::new(10.0, 0.0), coordinator, &[]);
+        let rally = Vec2::new(5.0, -10.0);
+        let assignments =
+            decompose_hold_line(Vec2::ZERO, Vec2::new(10.0, 0.0), rally, coordinator, &[]);
         assert_eq!(assignments[0].assignee, coordinator);
-        assert_eq!(assignments[0].station_m, Vec2::new(5.0, 0.0));
+        assert_eq!(assignments[0].station.position_m, Vec2::new(5.0, 0.0));
+        assert_eq!(assignments[0].fallback.position_m, rally);
+        assert_eq!(
+            assignments[0].station.heading_radians,
+            assignments[0].fallback.heading_radians
+        );
     }
 
     #[test]
@@ -325,7 +403,8 @@ mod tests {
             }),
             next_hold_station: Some(HoldStationAssignment {
                 assignee,
-                station_m: Vec2::X,
+                station: PositionTarget::new(Vec2::X, Some(0.0)),
+                fallback: PositionTarget::new(Vec2::NEG_Y, Some(0.0)),
             }),
             ..Default::default()
         };
@@ -341,8 +420,9 @@ mod tests {
     #[test]
     fn expired_assignment_moves_to_fallback_then_holds() {
         let rally_point = Vec2::new(-5.0, 2.0);
+        let fallback_target = PositionTarget::new(rally_point, Some(1.0));
         let moving = PlannerState {
-            fallback_point_m: Some(rally_point),
+            fallback_target: Some(fallback_target),
             ..Default::default()
         };
         let planned = plan(&build_infantry_domain(), &moving).unwrap();
@@ -350,14 +430,15 @@ mod tests {
         assert_eq!(
             planned.steps[0].operator,
             BoundOperator::MoveTo {
-                destination_m: rally_point
+                target: fallback_target
             }
         );
 
         let arrived = PlannerState {
             position_m: rally_point,
-            fallback_point_m: Some(rally_point),
-            at_fallback_point: true,
+            heading_radians: 1.0,
+            fallback_target: Some(fallback_target),
+            at_fallback_target: true,
             ..Default::default()
         };
         let planned = plan(&build_infantry_domain(), &arrived).unwrap();
@@ -381,7 +462,7 @@ mod tests {
                 expires_at: None,
             }),
             mission_delegation_complete: true,
-            own_mission_station_m: Some(Vec2::new(5.0, 0.0)),
+            own_mission_target: Some(PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.5))),
             ..Default::default()
         };
         let planned = plan(&build_infantry_domain(), &state).unwrap();
@@ -390,7 +471,7 @@ mod tests {
         assert_eq!(
             planned.steps[0].operator,
             BoundOperator::MoveTo {
-                destination_m: Vec2::new(5.0, 0.0)
+                target: PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.5))
             }
         );
     }

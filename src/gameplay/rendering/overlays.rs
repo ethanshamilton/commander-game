@@ -376,12 +376,12 @@ fn draw_selected_unit_order(
         return;
     };
 
-    let Some(UnitOrder::MoveTo { destination_m }) = order else {
+    let Some(UnitOrder::MoveTo { target }) = order else {
         return;
     };
 
     let start = position.0.map(meters);
-    let destination = destination_m.map(meters);
+    let destination = target.position_m.map(meters);
     let color = Color::WHITE;
 
     if let Some(line_start) = point_from_circle_border(start, destination, UNIT_OVERLAY_RADIUS) {

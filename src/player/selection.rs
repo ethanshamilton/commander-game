@@ -11,6 +11,7 @@ use crate::gameplay::packets::{
     Address, OrderCommand, Outbox, PacketIdAllocator, PacketPayload, SeenPackets,
 };
 use crate::gameplay::simulation::{SimulationClock, UnitOrder};
+use crate::gameplay::spatial::PositionTarget;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
 use crate::player::mission_placement::{MissionPlacementState, PlayerInputSet, SelectedMission};
@@ -182,7 +183,7 @@ fn issue_contextual_order(
             OrderCommand::Combat(CombatOrder::FireAt { target })
         } else {
             OrderCommand::Unit(UnitOrder::MoveTo {
-                destination_m: world_position.map(to_meters),
+                target: PositionTarget::new(world_position.map(to_meters), None),
             })
         };
 
