@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Now
-- MISSIONS: Mission system for use by both AI and human commanders with multiple mission types, allowing macro level command
+- PLANS: Plan system for use by both AI and human commanders with multiple plan types, allowing macro level command
 - COMMAND: Command succession and dynamic redelegation.
-- SCENARIOS: Multi-squad command tutorial scenario.
+- MISSIONS: Multi-squad command tutorial mission.
   - This will be used to implement and test command succession.
 
 ## Next
@@ -17,4 +17,4 @@
 ## Later
 - COMMS: Intercept communications from opponents.
 - TOOLS: Map editor
-- TOOLS: Scenario editor
+- TOOLS: Mission editor

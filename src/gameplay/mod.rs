@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod combat;
 pub mod command;
+pub mod command_plans;
 pub mod comms;
 pub mod debug_powers;
 pub mod diagnostics;
@@ -10,7 +11,6 @@ pub mod formations;
 pub mod lifecycle;
 pub mod map;
 pub mod measurements;
-pub mod missions;
 pub mod objectives;
 pub mod orders;
 pub mod packets;
@@ -24,11 +24,11 @@ use audio::GameplayAudioPlugin;
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use combat::CombatPlugin;
 use command::CommandPlugin;
+use command_plans::CommandPlansPlugin;
 use comms::CommsPlugin;
 use debug_powers::DebugPowersPlugin;
 use diagnostics::GameplayDiagnosticsPlugin;
 use lifecycle::UnitLifecyclePlugin;
-use missions::MissionsPlugin;
 use objectives::ObjectivesPlugin;
 use packets::PacketsPlugin;
 use rendering::GameplayRenderingPlugin;
@@ -43,7 +43,7 @@ impl PluginGroup for GameplayPlugins {
             .add(SimulationPlugin)
             .add(SpatialIndexPlugin)
             .add(UnitLifecyclePlugin)
-            .add(MissionsPlugin)
+            .add(CommandPlansPlugin)
             .add(DebugPowersPlugin)
             .add(CommandPlugin)
             .add(CommsPlugin)

@@ -1,15 +1,15 @@
 use super::executor::{Autonomous, RecentResolvedShots};
 use super::leader::decompose_hold_line;
 use super::state::{
-    AssignedMissionBelief, AssignedTaskBelief, AssignedTaskKind, HostileBelief, PlannerState,
+    AssignedCommandPlanBelief, AssignedTaskBelief, AssignedTaskKind, HostileBelief, PlannerState,
 };
 use crate::actors::units::{Alive, Health, Inventory, Soldier};
 use crate::ai::perception::{AuditorySensor, Contact, ContactKind, ContactType, PerceptionMemory};
 use crate::gameplay::combat::ResolvedShot;
 use crate::gameplay::command::CommandForest;
-use crate::gameplay::missions::{
-    AssignedMission, AssignedTask, MissionArea, MissionDelegationProgress, MissionKind,
-    TaskDirective,
+use crate::gameplay::command_plans::{
+    AssignedCommandPlan, AssignedTask, CommandPlanArea, CommandPlanDelegationProgress,
+    CommandPlanKind, TaskDirective,
 };
 use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
@@ -48,9 +48,9 @@ pub fn synthesize_beliefs(
             &PerceptionMemory,
             Option<&AuditorySensor>,
             Option<&MovementOrder>,
-            Option<&AssignedMission>,
+            Option<&AssignedCommandPlan>,
             Option<&AssignedTask>,
-            Option<&MissionDelegationProgress>,
+            Option<&CommandPlanDelegationProgress>,
             &mut PlannerBelief,
         ),
         (With<Soldier>, With<Alive>, With<Autonomous>),
@@ -65,7 +65,7 @@ pub fn synthesize_beliefs(
         memory,
         auditory,
         order,
-        assigned_mission,
+        assigned_plan,
         assigned_task,
         delegation_progress,
         mut belief,
@@ -85,10 +85,10 @@ pub fn synthesize_beliefs(
         );
         project_task_belief(&mut state, assigned_task);
         if let Some(command_forest) = command_forest.as_deref() {
-            project_mission_belief(
+            project_plan_belief(
                 &mut state,
                 entity,
-                assigned_mission,
+                assigned_plan,
                 delegation_progress,
                 command_forest,
                 &living_soldiers,
@@ -106,13 +106,13 @@ fn project_task_belief(state: &mut PlannerState, assigned: Option<&AssignedTask>
 
     match assigned.directive {
         TaskDirective::HoldStation {
-            mission_id,
+            plan_id,
             station,
             fallback,
             expires_at,
         } => {
             state.assigned_task = Some(AssignedTaskBelief {
-                mission_id,
+                plan_id,
                 issued_tick: assigned.issued_tick,
                 kind: AssignedTaskKind::HoldStation,
                 station,
@@ -125,13 +125,13 @@ fn project_task_belief(state: &mut PlannerState, assigned: Option<&AssignedTask>
 }
 
 fn project_expiry_fallback(state: &mut PlannerState) {
-    // Mission and task assignments live in separate ECS lanes. If both remain
+    // CommandPlan and task assignments live in separate ECS lanes. If both remain
     // installed, the newest directive is the unit's current source of intent.
-    let fallback = match (state.assigned_mission, state.assigned_task) {
-        (Some(mission), Some(task)) if task.issued_tick > mission.issued_tick => {
+    let fallback = match (state.assigned_plan, state.assigned_task) {
+        (Some(plan), Some(task)) if task.issued_tick > plan.issued_tick => {
             task.expires_at.map(|expiry| (expiry, task.fallback))
         }
-        (Some(mission), _) => mission.expires_at.zip(state.own_fallback_target),
+        (Some(plan), _) => plan.expires_at.zip(state.own_fallback_target),
         (None, Some(task)) => task.expires_at.map(|expiry| (expiry, task.fallback)),
         (None, None) => None,
     };
@@ -147,11 +147,11 @@ fn project_expiry_fallback(state: &mut PlannerState) {
     state.at_fallback_target = target_is_reached(state, fallback_target);
 }
 
-fn project_mission_belief(
+fn project_plan_belief(
     state: &mut PlannerState,
     entity: Entity,
-    assigned: Option<&AssignedMission>,
-    progress: Option<&MissionDelegationProgress>,
+    assigned: Option<&AssignedCommandPlan>,
+    progress: Option<&CommandPlanDelegationProgress>,
     command_forest: &CommandForest,
     living_soldiers: &Query<(), (With<Soldier>, With<Alive>)>,
 ) {
@@ -159,21 +159,21 @@ fn project_mission_belief(
         return;
     };
 
-    let mission = AssignedMissionBelief {
-        id: assigned.mission.id,
+    let plan = AssignedCommandPlanBelief {
+        id: assigned.plan.id,
         issued_tick: assigned.issued_tick,
-        kind: assigned.mission.kind,
-        area: assigned.mission.area,
-        rally_point_m: assigned.mission.rally_point_m,
-        expires_at: assigned.mission.expires_at,
+        kind: assigned.plan.kind,
+        area: assigned.plan.area,
+        rally_point_m: assigned.plan.rally_point_m,
+        expires_at: assigned.plan.expires_at,
     };
-    state.assigned_mission = Some(mission);
+    state.assigned_plan = Some(plan);
     state.has_command_responsibility = true;
 
-    if mission.kind != MissionKind::HoldLine {
+    if plan.kind != CommandPlanKind::HoldLine {
         return;
     }
-    let MissionArea::Line { from_m, to_m } = mission.area else {
+    let CommandPlanArea::Line { from_m, to_m } = plan.area else {
         return;
     };
 
@@ -183,10 +183,9 @@ fn project_mission_belief(
         .copied()
         .filter(|subordinate| living_soldiers.get(*subordinate).is_ok())
         .collect();
-    let assignments =
-        decompose_hold_line(from_m, to_m, mission.rally_point_m, entity, &subordinates);
+    let assignments = decompose_hold_line(from_m, to_m, plan.rally_point_m, entity, &subordinates);
     let delegated = progress
-        .filter(|progress| progress.mission == Some(mission.identity()))
+        .filter(|progress| progress.plan == Some(plan.identity()))
         .map(|progress| progress.delegated_to.as_slice())
         .unwrap_or(&[]);
 
@@ -194,20 +193,20 @@ fn project_mission_belief(
     let own_assignment = assignments
         .iter()
         .find(|assignment| assignment.assignee == entity);
-    state.own_mission_target = own_assignment.map(|assignment| assignment.station);
+    state.own_plan_target = own_assignment.map(|assignment| assignment.station);
     state.own_fallback_target = own_assignment.map(|assignment| assignment.fallback);
-    state.at_own_mission_target = state
-        .own_mission_target
+    state.at_own_plan_target = state
+        .own_plan_target
         .is_some_and(|target| target_is_reached(state, target));
 
-    if state.mission_is_expired() {
+    if state.plan_is_expired() {
         return;
     }
 
     state.next_hold_station = assignments.iter().copied().find(|assignment| {
         assignment.assignee != entity && !delegated.contains(&assignment.assignee)
     });
-    state.mission_delegation_complete = state.next_hold_station.is_none();
+    state.plan_delegation_complete = state.next_hold_station.is_none();
 }
 
 fn target_is_reached(state: &PlannerState, target: PositionTarget) -> bool {
@@ -688,7 +687,7 @@ mod tests {
     fn assigned_hold_station_projects_distance_and_expiry_facts() {
         let assigned = AssignedTask {
             directive: TaskDirective::HoldStation {
-                mission_id: crate::gameplay::missions::MissionId(4),
+                plan_id: crate::gameplay::command_plans::CommandPlanId(4),
                 station: PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.0)),
                 fallback: PositionTarget::new(Vec2::new(-5.0, 0.0), Some(1.0)),
                 expires_at: Some(12),
@@ -734,11 +733,11 @@ mod tests {
         let mut state = PlannerState {
             position_m: Vec2::new(10.0, 0.0),
             tick: 20,
-            assigned_mission: Some(AssignedMissionBelief {
-                id: crate::gameplay::missions::MissionId(1),
+            assigned_plan: Some(AssignedCommandPlanBelief {
+                id: crate::gameplay::command_plans::CommandPlanId(1),
                 issued_tick: 10,
-                kind: MissionKind::HoldLine,
-                area: MissionArea::Line {
+                kind: CommandPlanKind::HoldLine,
+                area: CommandPlanArea::Line {
                     from_m: Vec2::ZERO,
                     to_m: Vec2::X,
                 },
@@ -746,7 +745,7 @@ mod tests {
                 expires_at: Some(15),
             }),
             assigned_task: Some(AssignedTaskBelief {
-                mission_id: crate::gameplay::missions::MissionId(2),
+                plan_id: crate::gameplay::command_plans::CommandPlanId(2),
                 issued_tick: 11,
                 kind: AssignedTaskKind::HoldStation,
                 station: PositionTarget::new(Vec2::X, None),

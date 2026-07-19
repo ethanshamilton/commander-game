@@ -14,8 +14,8 @@ impl Plugin for CommandPlugin {
 
 /// Stable data-facing identifier for a unit.
 ///
-/// Scenario/external definitions should use this instead of Bevy `Entity`, because
-/// entities are runtime-only IDs assigned when the scenario is spawned.
+/// Mission/external definitions should use this instead of Bevy `Entity`, because
+/// entities are runtime-only IDs assigned when the mission is spawned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnitId(pub &'static str);
 

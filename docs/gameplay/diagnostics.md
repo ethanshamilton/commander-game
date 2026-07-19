@@ -10,8 +10,8 @@ Diagnostics expose the health of the simulation itself. This module is for obser
 
 Because the simulation sets are chained (strictly sequential), tiny boundary systems between each consecutive pair of `SimulationSet`s can attribute wall time to each phase exactly. Each phase's duration is folded into an exponential moving average (α = 0.05, roughly a one-second window at 20Hz), giving an aggregate view of which phases dominate the tick budget. Measured time includes scheduler overhead within a set, which is a real cost.
 
-The scenario screen shows the tick meter in the top-right diagnostics box; clicking that box toggles the per-phase breakdown, sorted most expensive first.
+The mission screen shows the tick meter in the top-right diagnostics box; clicking that box toggles the per-phase breakdown, sorted most expensive first.
 
 ## Frame timing
 
-Bevy's frame-time diagnostic supplies a smoothed FPS measurement. The scenario screen's `RENDER` meter shows current FPS as a percentage of a 60 FPS target. This reflects whole-frame pacing and is not a GPU-only measurement.
+Bevy's frame-time diagnostic supplies a smoothed FPS measurement. The mission screen's `RENDER` meter shows current FPS as a percentage of a 60 FPS target. This reflects whole-frame pacing and is not a GPU-only measurement.

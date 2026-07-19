@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 /// Shared description of the interaction the player is currently performing.
 /// Any gameplay/UI system may set or clear it; the view is intentionally
-/// decoupled from mission placement.
+/// decoupled from plan placement.
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct ActiveAction {
     label: Option<String>,
@@ -74,8 +74,8 @@ mod tests {
         assert_eq!(action.label(), None);
         action.set("Create Line Start");
         assert_eq!(action.label(), Some("Create Line Start"));
-        action.set("Assign Mission: Select Squad Leader");
-        assert_eq!(action.label(), Some("Assign Mission: Select Squad Leader"));
+        action.set("Assign Plan: Select Squad Leader");
+        assert_eq!(action.label(), Some("Assign Plan: Select Squad Leader"));
         action.clear();
         assert_eq!(action.label(), None);
     }

@@ -17,7 +17,7 @@ around it, so the decomposition logic is unit-testable without spinning up an
 - **`soldier.rs` / `leader.rs`** — composable task installers and the infantry
   domain builder. Every infantry unit has the same behavioral repertoire;
   leadership methods become applicable only when planner state contains current
-  command responsibility and an assigned mission. Leadership is therefore a
+  command responsibility and an assigned plan. Leadership is therefore a
   transient role rather than a rank-selected domain.
 - **`operators.rs`** — `BoundOperator` (the concrete, parameterized action a
   primitive task resolves to: `Hold`/`MoveTo`/`FireAt`/delegation) plus its `dispatch()`
@@ -48,7 +48,7 @@ around it, so the decomposition logic is unit-testable without spinning up an
   operator), `advance_plan_execution` (poll the running step, advance or tear
   down the runner). Also owns `HtnDomainRegistry` (`DomainId -> Domain` map)
   and `DomainRef` (which domain a unit plans with).
-- **Expiry fallback** — the newest expired mission/task projects its assigned
+- **Expiry fallback** — the newest expired plan/task projects its assigned
   fallback `PositionTarget` into planner state. The infantry root prioritizes
   fallback below survival and fresh-contact engagement but above normal
   assignments, investigation, and idle behavior. Units move to their formation
@@ -143,7 +143,7 @@ the existing soldier domain):
    `domains: HashMap::from([(DomainId::Soldier, ...), (DomainId::YourNew, ...)])`.
 4. Give spawned units of that archetype `DomainRef(DomainId::YourNew)` instead
    of `DomainRef(DomainId::Soldier)` (see `spawn_soldier_at` in
-   `screens/scenario.rs` for the current spawn-time wiring pattern —
+   `screens/mission.rs` for the current spawn-time wiring pattern —
    `Autonomous` + `DecisionTrace::default()` + `PlannerBelief::default()` +
    `DomainRef`). All soldiers are currently spawned autonomous, including
    player-side units, so direct player orders and HTN orders can be tested

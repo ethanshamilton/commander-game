@@ -181,7 +181,7 @@ mod tests {
     use crate::ai::htn::leader::build_infantry_domain;
     use crate::ai::htn::planner::{Mtr, plan};
     use crate::ai::htn::state::{AssignedTaskBelief, HostileBelief};
-    use crate::gameplay::missions::MissionId;
+    use crate::gameplay::command_plans::CommandPlanId;
     use bevy::prelude::*;
 
     fn state_with_hostile(kind: ContactKind, last_seen_tick: u64) -> PlannerState {
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn assigned_hold_station_moves_then_holds_at_the_station() {
         let assigned_task = AssignedTaskBelief {
-            mission_id: MissionId(3),
+            plan_id: CommandPlanId(3),
             issued_tick: 7,
             kind: AssignedTaskKind::HoldStation,
             station: PositionTarget::new(Vec2::new(12.0, 4.0), Some(0.5)),
@@ -282,7 +282,7 @@ mod tests {
         let state = PlannerState {
             tick: 10,
             assigned_task: Some(AssignedTaskBelief {
-                mission_id: MissionId(3),
+                plan_id: CommandPlanId(3),
                 issued_tick: 7,
                 kind: AssignedTaskKind::HoldStation,
                 station: PositionTarget::new(Vec2::X, None),

@@ -10,7 +10,7 @@ impl Plugin for DebugPowersPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            debug_kill_selected_unit.run_if(in_state(GameState::ScenarioScreen)),
+            debug_kill_selected_unit.run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

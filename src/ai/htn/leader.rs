@@ -4,21 +4,21 @@ use super::soldier::{
     low_health_with_hostile, stale_recent_hostile,
 };
 use super::state::{HoldStationAssignment, PlannerState};
+use crate::gameplay::command_plans::{CommandPlanArea, CommandPlanKind};
 use crate::gameplay::formations::{FormationKind, FormationSpec, generate_formation_positions};
-use crate::gameplay::missions::{MissionArea, MissionKind};
 use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
 const FALLBACK_FORMATION_SPACING_M: f32 = 3.0;
 
 pub struct LeadershipTasks {
-    pub execute_mission: TaskId,
+    pub execute_plan: TaskId,
 }
 
 fn add_fallback_task(builder: &mut DomainBuilder) -> TaskId {
     let move_to_fallback = builder.primitive_with_reason(
         "MoveToFallbackPoint",
-        "assigned mission or task expired; regroup at the preplanned rally point",
+        "assigned plan or task expired; regroup at the preplanned rally point",
         fallback_needs_movement,
         bind_move_to_fallback,
         effect_arrive_at_fallback,
@@ -50,27 +50,27 @@ fn add_fallback_task(builder: &mut DomainBuilder) -> TaskId {
 pub fn add_leadership_tasks(builder: &mut DomainBuilder) -> LeadershipTasks {
     let delegate = builder.primitive_with_reason(
         "DelegateHoldStation",
-        "assigned Hold Line mission has an undelegated subordinate station",
+        "assigned Hold Line plan has an undelegated subordinate station",
         has_next_hold_station,
         bind_next_hold_station,
         mark_next_station_delegated_in_simulation,
     );
     let move_to_own_station = builder.primitive_with_reason(
-        "MoveToOwnMissionStation",
+        "MoveToOwnCommandPlanStation",
         "all other Hold Line stations are delegated; occupy own formation station",
-        should_move_to_own_mission_station,
-        bind_move_to_own_mission_station,
-        effect_arrive_at_own_mission_station,
+        should_move_to_own_plan_station,
+        bind_move_to_own_plan_station,
+        effect_arrive_at_own_plan_station,
     );
     let hold_own_station = builder.primitive_with_reason(
-        "HoldOwnMissionStation",
+        "HoldOwnCommandPlanStation",
         "own Hold Line formation station has been reached",
-        at_own_active_mission_station,
+        at_own_active_plan_station,
         bind_hold,
         super::domain::no_effect,
     );
-    let execute_mission = builder.compound(
-        "ExecuteAssignedMission",
+    let execute_plan = builder.compound(
+        "ExecuteAssignedCommandPlan",
         vec![
             Method {
                 name: "DelegateNextStation",
@@ -79,23 +79,23 @@ pub fn add_leadership_tasks(builder: &mut DomainBuilder) -> LeadershipTasks {
             },
             Method {
                 name: "MoveToOwnStation",
-                preconditions: should_move_to_own_mission_station,
+                preconditions: should_move_to_own_plan_station,
                 subtasks: vec![move_to_own_station],
             },
             Method {
                 name: "HoldOwnStation",
-                preconditions: at_own_active_mission_station,
+                preconditions: at_own_active_plan_station,
                 subtasks: vec![hold_own_station],
             },
         ],
     );
 
-    LeadershipTasks { execute_mission }
+    LeadershipTasks { execute_plan }
 }
 
 /// One infantry repertoire shared by ordinary squad members and whoever
 /// currently has command responsibility. Leadership methods are inert unless
-/// planner state contains a valid assigned mission.
+/// planner state contains a valid assigned plan.
 pub fn build_infantry_domain() -> Domain {
     let mut builder = DomainBuilder::new();
     let soldier = add_soldier_tasks(&mut builder);
@@ -126,9 +126,9 @@ pub fn build_infantry_domain() -> Domain {
                 subtasks: vec![soldier.execute_assigned_task],
             },
             Method {
-                name: "ExecuteAssignedMission",
-                preconditions: active_hold_line_mission,
-                subtasks: vec![leadership.execute_mission],
+                name: "ExecuteAssignedCommandPlan",
+                preconditions: active_hold_line_plan,
+                subtasks: vec![leadership.execute_plan],
             },
             Method {
                 name: "Investigate",
@@ -176,61 +176,61 @@ fn effect_arrive_at_fallback(state: &mut PlannerState) {
     state.has_move_target = true;
 }
 
-fn active_hold_line_mission(state: &PlannerState) -> bool {
+fn active_hold_line_plan(state: &PlannerState) -> bool {
     state.has_command_responsibility
-        && state.assigned_mission.is_some_and(|mission| {
-            mission.kind == MissionKind::HoldLine
-                && matches!(mission.area, MissionArea::Line { .. })
-                && !state.mission_is_expired()
+        && state.assigned_plan.is_some_and(|plan| {
+            plan.kind == CommandPlanKind::HoldLine
+                && matches!(plan.area, CommandPlanArea::Line { .. })
+                && !state.plan_is_expired()
         })
 }
 
 fn has_next_hold_station(state: &PlannerState) -> bool {
-    active_hold_line_mission(state) && state.next_hold_station.is_some()
+    active_hold_line_plan(state) && state.next_hold_station.is_some()
 }
 
-fn should_move_to_own_mission_station(state: &PlannerState) -> bool {
-    active_hold_line_mission(state)
-        && state.mission_delegation_complete
-        && state.own_mission_target.is_some()
-        && !state.at_own_mission_target
+fn should_move_to_own_plan_station(state: &PlannerState) -> bool {
+    active_hold_line_plan(state)
+        && state.plan_delegation_complete
+        && state.own_plan_target.is_some()
+        && !state.at_own_plan_target
 }
 
-fn at_own_active_mission_station(state: &PlannerState) -> bool {
-    active_hold_line_mission(state)
-        && state.mission_delegation_complete
-        && state.own_mission_target.is_some()
-        && state.at_own_mission_target
+fn at_own_active_plan_station(state: &PlannerState) -> bool {
+    active_hold_line_plan(state)
+        && state.plan_delegation_complete
+        && state.own_plan_target.is_some()
+        && state.at_own_plan_target
 }
 
-fn bind_move_to_own_mission_station(state: &PlannerState) -> Option<BoundOperator> {
+fn bind_move_to_own_plan_station(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::MoveTo {
-        target: state.own_mission_target?,
+        target: state.own_plan_target?,
     })
 }
 
-fn effect_arrive_at_own_mission_station(state: &mut PlannerState) {
-    let Some(target) = state.own_mission_target else {
+fn effect_arrive_at_own_plan_station(state: &mut PlannerState) {
+    let Some(target) = state.own_plan_target else {
         return;
     };
     state.position_m = target.position_m;
     if let Some(heading) = target.heading_radians {
         state.heading_radians = heading;
     }
-    state.at_own_mission_target = true;
+    state.at_own_plan_target = true;
     state.has_move_target = true;
 }
 
 fn bind_next_hold_station(state: &PlannerState) -> Option<BoundOperator> {
-    let mission = state.assigned_mission?;
+    let plan = state.assigned_plan?;
     let assignment = state.next_hold_station?;
     Some(BoundOperator::DelegateHoldStation {
-        mission_id: mission.id,
-        mission_issued_tick: mission.issued_tick,
+        plan_id: plan.id,
+        plan_issued_tick: plan.issued_tick,
         assignee: assignment.assignee,
         station: assignment.station,
         fallback: assignment.fallback,
-        expires_at: mission.expires_at,
+        expires_at: plan.expires_at,
     })
 }
 
@@ -244,7 +244,7 @@ fn mark_next_station_delegated_in_simulation(state: &mut PlannerState) {
 }
 
 /// Deterministically assign every living formation participant, including the
-/// current mission coordinator, to one evenly spaced line station. Coordinator
+/// current plan coordinator, to one evenly spaced line station. Coordinator
 /// is a transient command relationship, not a special unit archetype.
 pub fn decompose_hold_line(
     from_m: Vec2,
@@ -318,8 +318,8 @@ fn fallback_facing(from_m: Vec2, to_m: Vec2, rally_point_m: Vec2) -> f32 {
 mod tests {
     use super::*;
     use crate::ai::htn::planner::{Mtr, plan};
-    use crate::ai::htn::state::AssignedMissionBelief;
-    use crate::gameplay::missions::MissionId;
+    use crate::ai::htn::state::AssignedCommandPlanBelief;
+    use crate::gameplay::command_plans::CommandPlanId;
 
     #[test]
     fn decomposition_is_stable_and_evenly_spaced() {
@@ -386,15 +386,15 @@ mod tests {
     }
 
     #[test]
-    fn assigned_mission_outranks_investigation_and_idle() {
+    fn assigned_plan_outranks_investigation_and_idle() {
         let assignee = Entity::from_raw_u32(2).unwrap();
         let state = PlannerState {
             has_command_responsibility: true,
-            assigned_mission: Some(AssignedMissionBelief {
-                id: MissionId(1),
+            assigned_plan: Some(AssignedCommandPlanBelief {
+                id: CommandPlanId(1),
                 issued_tick: 10,
-                kind: MissionKind::HoldLine,
-                area: MissionArea::Line {
+                kind: CommandPlanKind::HoldLine,
+                area: CommandPlanArea::Line {
                     from_m: Vec2::ZERO,
                     to_m: Vec2::X,
                 },
@@ -450,19 +450,19 @@ mod tests {
     fn coordinator_moves_to_own_station_after_delegation() {
         let state = PlannerState {
             has_command_responsibility: true,
-            assigned_mission: Some(AssignedMissionBelief {
-                id: MissionId(1),
+            assigned_plan: Some(AssignedCommandPlanBelief {
+                id: CommandPlanId(1),
                 issued_tick: 10,
-                kind: MissionKind::HoldLine,
-                area: MissionArea::Line {
+                kind: CommandPlanKind::HoldLine,
+                area: CommandPlanArea::Line {
                     from_m: Vec2::ZERO,
                     to_m: Vec2::X,
                 },
                 rally_point_m: Vec2::NEG_Y,
                 expires_at: None,
             }),
-            mission_delegation_complete: true,
-            own_mission_target: Some(PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.5))),
+            plan_delegation_complete: true,
+            own_plan_target: Some(PositionTarget::new(Vec2::new(5.0, 0.0), Some(0.5))),
             ..Default::default()
         };
         let planned = plan(&build_infantry_domain(), &state).unwrap();

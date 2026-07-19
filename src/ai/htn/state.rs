@@ -1,5 +1,5 @@
 use crate::ai::perception::ContactKind;
-use crate::gameplay::missions::{MissionArea, MissionId, MissionKind};
+use crate::gameplay::command_plans::{CommandPlanArea, CommandPlanId, CommandPlanKind};
 use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
@@ -18,17 +18,17 @@ pub struct PlannerState {
     pub under_fire: bool,
     pub has_move_target: bool,
     pub tick: u64,
-    pub assigned_mission: Option<AssignedMissionBelief>,
+    pub assigned_plan: Option<AssignedCommandPlanBelief>,
     pub next_hold_station: Option<HoldStationAssignment>,
-    pub mission_delegation_complete: bool,
+    pub plan_delegation_complete: bool,
     pub delegated_assignees: Vec<Entity>,
     pub has_command_responsibility: bool,
-    pub own_mission_target: Option<PositionTarget>,
+    pub own_plan_target: Option<PositionTarget>,
     pub own_fallback_target: Option<PositionTarget>,
-    pub at_own_mission_target: bool,
+    pub at_own_plan_target: bool,
     pub assigned_task: Option<AssignedTaskBelief>,
     pub at_assigned_station: bool,
-    /// Pose from the newest expired mission/task assignment.
+    /// Pose from the newest expired plan/task assignment.
     pub fallback_target: Option<PositionTarget>,
     pub at_fallback_target: bool,
 }
@@ -44,15 +44,15 @@ impl PlannerState {
             .is_some_and(|staleness| staleness <= max_staleness_ticks)
     }
 
-    pub fn mission_is_expired(&self) -> bool {
-        self.assigned_mission
-            .and_then(|mission| mission.expires_at)
+    pub fn plan_is_expired(&self) -> bool {
+        self.assigned_plan
+            .and_then(|plan| plan.expires_at)
             .is_some_and(|expires_at| self.tick >= expires_at)
     }
 
-    pub fn has_delegated_to(&self, mission: (MissionId, u64), assignee: Entity) -> bool {
-        self.assigned_mission
-            .is_some_and(|assigned| assigned.identity() == mission)
+    pub fn has_delegated_to(&self, plan: (CommandPlanId, u64), assignee: Entity) -> bool {
+        self.assigned_plan
+            .is_some_and(|assigned| assigned.identity() == plan)
             && self.delegated_assignees.contains(&assignee)
     }
 
@@ -67,20 +67,20 @@ impl PlannerState {
     }
 }
 
-/// Mission facts projected from the recipient's `AssignedMission` component.
+/// CommandPlan facts projected from the recipient's `AssignedCommandPlan` component.
 /// This is the planner-facing view, not a second operational source of truth.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AssignedMissionBelief {
-    pub id: MissionId,
+pub struct AssignedCommandPlanBelief {
+    pub id: CommandPlanId,
     pub issued_tick: u64,
-    pub kind: MissionKind,
-    pub area: MissionArea,
+    pub kind: CommandPlanKind,
+    pub area: CommandPlanArea,
     pub rally_point_m: Vec2,
     pub expires_at: Option<u64>,
 }
 
-impl AssignedMissionBelief {
-    pub fn identity(self) -> (MissionId, u64) {
+impl AssignedCommandPlanBelief {
+    pub fn identity(self) -> (CommandPlanId, u64) {
         (self.id, self.issued_tick)
     }
 }
@@ -92,7 +92,7 @@ pub enum AssignedTaskKind {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AssignedTaskBelief {
-    pub mission_id: MissionId,
+    pub plan_id: CommandPlanId,
     pub issued_tick: u64,
     pub kind: AssignedTaskKind,
     pub station: PositionTarget,
@@ -101,8 +101,8 @@ pub struct AssignedTaskBelief {
 }
 
 impl AssignedTaskBelief {
-    pub fn identity(self) -> (MissionId, u64) {
-        (self.mission_id, self.issued_tick)
+    pub fn identity(self) -> (CommandPlanId, u64) {
+        (self.plan_id, self.issued_tick)
     }
 }
 
@@ -133,14 +133,14 @@ impl Default for PlannerState {
             under_fire: false,
             has_move_target: false,
             tick: 0,
-            assigned_mission: None,
+            assigned_plan: None,
             next_hold_station: None,
-            mission_delegation_complete: false,
+            plan_delegation_complete: false,
             delegated_assignees: Vec::new(),
             has_command_responsibility: false,
-            own_mission_target: None,
+            own_plan_target: None,
             own_fallback_target: None,
-            at_own_mission_target: false,
+            at_own_plan_target: false,
             assigned_task: None,
             at_assigned_station: false,
             fallback_target: None,
@@ -164,15 +164,15 @@ pub struct PlannerStateDigest {
     pub has_ammo: bool,
     pub under_fire: bool,
     pub has_move_target: bool,
-    pub assigned_mission: Option<(MissionId, u64)>,
-    pub mission_expired: bool,
+    pub assigned_plan: Option<(CommandPlanId, u64)>,
+    pub plan_expired: bool,
     pub next_hold_station_assignee: Option<Entity>,
     pub next_hold_station_dm: Option<(i32, i32)>,
-    pub mission_delegation_complete: bool,
+    pub plan_delegation_complete: bool,
     pub has_command_responsibility: bool,
-    pub own_mission_target: Option<PositionTargetDigest>,
-    pub at_own_mission_target: bool,
-    pub assigned_task: Option<(MissionId, u64)>,
+    pub own_plan_target: Option<PositionTargetDigest>,
+    pub at_own_plan_target: bool,
+    pub assigned_task: Option<(CommandPlanId, u64)>,
     pub assigned_task_expired: bool,
     pub at_assigned_station: bool,
     pub fallback_target: Option<PositionTargetDigest>,
@@ -188,16 +188,16 @@ impl PlannerStateDigest {
             has_ammo: state.has_ammo,
             under_fire: state.under_fire,
             has_move_target: state.has_move_target,
-            assigned_mission: state.assigned_mission.map(AssignedMissionBelief::identity),
-            mission_expired: state.mission_is_expired(),
+            assigned_plan: state.assigned_plan.map(AssignedCommandPlanBelief::identity),
+            plan_expired: state.plan_is_expired(),
             next_hold_station_assignee: state.next_hold_station.map(|next| next.assignee),
             next_hold_station_dm: state
                 .next_hold_station
                 .map(|next| quantize_decimeters(next.station.position_m)),
-            mission_delegation_complete: state.mission_delegation_complete,
+            plan_delegation_complete: state.plan_delegation_complete,
             has_command_responsibility: state.has_command_responsibility,
-            own_mission_target: state.own_mission_target.map(PositionTargetDigest::from),
-            at_own_mission_target: state.at_own_mission_target,
+            own_plan_target: state.own_plan_target.map(PositionTargetDigest::from),
+            at_own_plan_target: state.at_own_plan_target,
             assigned_task: state.assigned_task.map(AssignedTaskBelief::identity),
             assigned_task_expired: state.assigned_task_is_expired(),
             at_assigned_station: state.at_assigned_station,

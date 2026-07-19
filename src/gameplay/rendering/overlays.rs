@@ -9,10 +9,10 @@ use crate::ai::perception::{
     has_line_of_sight,
 };
 use crate::gameplay::command::CommandForest;
+use crate::gameplay::command_plans::{CommandPlan, CommandPlanArea, CommandPlanAssignees};
 use crate::gameplay::comms::{CommsGraph, VoiceComms};
 use crate::gameplay::map::BattlefieldMap;
 use crate::gameplay::measurements::{BEVY_UNITS_PER_METER, meters};
-use crate::gameplay::missions::{MissionArea, MissionAssignees, MissionPlan, TacticalMission};
 use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::intel::ReportedLifeStatus;
@@ -21,9 +21,7 @@ use crate::player::knowledge::{
     CONTACT_RECENCY_TTL_TICKS, PlayerControlledUnit, PlayerTacticalKnowledge,
     REPORT_RECENCY_TTL_TICKS,
 };
-use crate::player::mission_placement::{
-    HoldLinePlacementPhase, MissionPlacementState, SelectedMission,
-};
+use crate::player::plan_placement::{HoldLinePlacementPhase, PlanPlacementState, SelectedPlan};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -38,7 +36,7 @@ impl Plugin for TacticalOverlayRenderingPlugin {
                 recompute_selected_unit_sensor_cone
                     .before(draw_selected_unit_sensor_cone)
                     .in_set(RenderingSet::Overlays)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .run_if(in_state(GameState::MissionScreen)),
             )
             .add_systems(
                 Update,
@@ -50,11 +48,11 @@ impl Plugin for TacticalOverlayRenderingPlugin {
                     draw_selected_unit_comms,
                     draw_selected_unit_command_relations,
                     draw_enemy_contact_boxes,
-                    draw_mission_placement_overlay,
+                    draw_plan_placement_overlay,
                     draw_finalized_mission_overlays,
                 )
                     .in_set(RenderingSet::Overlays)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .run_if(in_state(GameState::MissionScreen)),
             );
     }
 }
@@ -79,8 +77,8 @@ struct CachedSensorCone {
     endpoints: Vec<Vec2>,
 }
 
-fn draw_mission_placement_overlay(
-    placement: Res<MissionPlacementState>,
+fn draw_plan_placement_overlay(
+    placement: Res<PlanPlacementState>,
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     mut gizmos: Gizmos,
@@ -120,19 +118,19 @@ fn draw_mission_placement_overlay(
 
 fn draw_finalized_mission_overlays(
     selected_unit: Res<SelectedUnit>,
-    selected_mission: Res<SelectedMission>,
+    selected_mission: Res<SelectedPlan>,
     command_forest: Res<CommandForest>,
-    missions: Query<(Entity, &MissionPlan, &MissionAssignees), With<TacticalMission>>,
+    plans: Query<(Entity, &CommandPlan, &CommandPlanAssignees)>,
     mut gizmos: Gizmos,
 ) {
-    // Selecting a mission in the menu is an explicit plan-preview mode. Map
-    // unit selection clears it; then only missions assigned to the selected
+    // Selecting a plan in the menu is an explicit plan-preview mode. Map
+    // unit selection clears it; then only plans assigned to the selected
     // unit's squad leader are visible.
     let selected_leader = selected_unit
         .entity
         .map(|entity| command_forest.superior_of(entity).unwrap_or(entity));
 
-    for (entity, mission, assignees) in &missions {
+    for (entity, plan, assignees) in &plans {
         let explicit_preview = selected_mission.preview && selected_mission.entity == Some(entity);
         let assigned_to_selected_squad =
             selected_leader.is_some_and(|leader| assignees.assignees.contains(&leader));
@@ -140,7 +138,7 @@ fn draw_finalized_mission_overlays(
             continue;
         }
 
-        let MissionArea::Line { from_m, to_m } = mission.area else {
+        let CommandPlanArea::Line { from_m, to_m } = plan.area else {
             continue;
         };
 
@@ -151,15 +149,15 @@ fn draw_finalized_mission_overlays(
         gizmos.circle_2d(from, meters(0.55), color).resolution(16);
         gizmos.circle_2d(to, meters(0.55), color).resolution(16);
 
-        let rally = mission.rally_point_m.map(meters);
+        let rally = plan.rally_point_m.map(meters);
         gizmos
             .circle_2d(rally, meters(MISSION_RALLY_RADIUS_M), color)
             .resolution(24);
         gizmos.line_2d(midpoint(from, to), rally, color);
         let label = if selected_mission.entity == Some(entity) {
-            format!("> {}", mission.label)
+            format!("> {}", plan.label)
         } else {
-            mission.label.clone()
+            plan.label.clone()
         };
         gizmos.text_2d(
             Isometry2d::from_translation(

@@ -31,7 +31,7 @@ impl Plugin for HtnExecutorPlugin {
                 )
                     .chain()
                     .in_set(SimulationSet::Thinking)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .run_if(in_state(GameState::MissionScreen)),
             )
             .add_systems(
                 FixedUpdate,

@@ -29,7 +29,7 @@ impl Plugin for CombatPlugin {
                 )
                     .chain()
                     .in_set(SimulationSet::Combat)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .run_if(in_state(GameState::MissionScreen)),
             );
     }
 }

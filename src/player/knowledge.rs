@@ -21,7 +21,7 @@ impl Plugin for PlayerKnowledgePlugin {
             (consume_player_report_packets, author_report_packets)
                 .chain()
                 .in_set(SimulationSet::Reports)
-                .run_if(in_state(GameState::ScenarioScreen)),
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -181,7 +181,7 @@ fn consume_player_report_packets(
                 });
             }
             PacketPayload::OrderCommand(_)
-            | PacketPayload::MissionAssignment(_)
+            | PacketPayload::CommandPlanAssignment(_)
             | PacketPayload::TaskAssignment(_) => retained.push(entry),
         }
     }

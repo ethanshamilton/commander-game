@@ -2,7 +2,7 @@
 
 Commander separates what is true from what units know and what the player sees.
 
-Ground truth is the authoritative ECS world state: the actual components and resources on entities. It is not a separate central database. Scenario data only provides initial conditions; after spawning, the ECS world is the source of truth.
+Ground truth is the authoritative ECS world state: the actual components and resources on entities. It is not a separate central database. Mission data only provides initial conditions; after spawning, the ECS world is the source of truth.
 
 The epistemic pipeline is:
 

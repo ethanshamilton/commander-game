@@ -5,11 +5,11 @@ use crate::actors::units::{Alive, Side, Soldier};
 use crate::ai::perception::ContactType;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
-use crate::gameplay::comms::{CommsGraph, update_comms_graph};
-use crate::gameplay::missions::{
-    AssignedMission, AssignedTask, MissionAssignmentMessage, TaskAssignmentMessage,
+use crate::gameplay::command_plans::{
+    AssignedCommandPlan, AssignedTask, CommandPlanAssignmentMessage, TaskAssignmentMessage,
     should_install_task_assignment,
 };
+use crate::gameplay::comms::{CommsGraph, update_comms_graph};
 use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
 use crate::gameplay::simulation::{MovementOrder, SimulationClock, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
@@ -31,7 +31,7 @@ impl Plugin for PacketsPlugin {
                 deliver_packets,
                 relay_packets,
                 apply_order_commands,
-                apply_mission_assignments,
+                apply_plan_assignments,
                 apply_task_assignments,
             )
                 .chain()
@@ -90,7 +90,7 @@ pub enum PacketPayload {
     ContactReport(ContactClaim),
     StatusReport(StatusClaim),
     OrderCommand(OrderCommand),
-    MissionAssignment(MissionAssignmentMessage),
+    CommandPlanAssignment(CommandPlanAssignmentMessage),
     TaskAssignment(TaskAssignmentMessage),
 }
 
@@ -311,32 +311,38 @@ fn relay_inbox_for_entity(entity: Entity, inbox: &mut Inbox, outbox: &mut Outbox
 
 /// Consume order-command packets addressed to this unit.
 ///
-/// Consume mission assignment packets addressed to this unit. Assignments are
+/// Consume plan assignment packets addressed to this unit. Assignments are
 /// HTN inputs; this system never writes a concrete order lane.
-fn apply_mission_assignments(
+fn apply_plan_assignments(
     mut commands: Commands,
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
-    mut units: Query<(Entity, &mut Inbox, Option<&AssignedMission>), (With<Soldier>, With<Alive>)>,
+    mut units: Query<
+        (Entity, &mut Inbox, Option<&AssignedCommandPlan>),
+        (With<Soldier>, With<Alive>),
+    >,
 ) {
     for (entity, mut inbox, current) in &mut units {
         let mut retained = Vec::with_capacity(inbox.packets.len());
         let mut newest_issued_tick = current.map(|assignment| assignment.issued_tick);
         for entry in inbox.packets.drain(..) {
             let is_assignment_for_me = matches!(entry.packet.address, Address::Direct(target) if target == entity)
-                && matches!(&entry.packet.payload, PacketPayload::MissionAssignment(_));
+                && matches!(
+                    &entry.packet.payload,
+                    PacketPayload::CommandPlanAssignment(_)
+                );
             if !is_assignment_for_me {
                 retained.push(entry);
                 continue;
             }
 
-            let PacketPayload::MissionAssignment(message) = entry.packet.payload else {
+            let PacketPayload::CommandPlanAssignment(message) = entry.packet.payload else {
                 unreachable!("payload was checked above");
             };
             let valid = command_forest.can_command(entry.packet.origin, entity)
-                && message.mission.validate().is_ok()
+                && message.plan.validate().is_ok()
                 && message
-                    .mission
+                    .plan
                     .expires_at
                     .is_none_or(|expiry| expiry > clock.tick)
                 && newest_issued_tick.is_none_or(|current| message.issued_tick > current);
@@ -345,8 +351,8 @@ fn apply_mission_assignments(
             }
 
             newest_issued_tick = Some(message.issued_tick);
-            commands.entity(entity).insert(AssignedMission {
-                mission: message.mission,
+            commands.entity(entity).insert(AssignedCommandPlan {
+                plan: message.plan,
                 assigned_by: entry.packet.origin,
                 issued_tick: message.issued_tick,
                 received_tick: clock.tick,
@@ -356,7 +362,7 @@ fn apply_mission_assignments(
     }
 }
 
-/// Consume subordinate task directives addressed to this unit. Like mission
+/// Consume subordinate task directives addressed to this unit. Like plan
 /// assignments, these become planner inputs and never concrete orders.
 fn apply_task_assignments(
     mut commands: Commands,
@@ -458,8 +464,8 @@ fn apply_order_commands(
 mod tests {
     use super::*;
     use crate::actors::units::{Dead, Rank, Role};
+    use crate::gameplay::command_plans::{CommandPlanId, TaskDirective};
     use crate::gameplay::comms::{CommsKind, CommsLink, CommsLinks};
-    use crate::gameplay::missions::{MissionId, TaskDirective};
     use bevy::ecs::system::RunSystemOnce;
     use std::collections::{HashMap, HashSet};
 
@@ -1175,7 +1181,7 @@ mod tests {
         let subordinate = spawn_packet_soldier(&mut world, true);
         insert_command_forest(&mut world, leader, subordinate);
         let directive = TaskDirective::HoldStation {
-            mission_id: MissionId(2),
+            plan_id: CommandPlanId(2),
             station: PositionTarget::new(Vec2::new(4.0, 5.0), Some(0.5)),
             fallback: PositionTarget::new(Vec2::ZERO, Some(0.5)),
             expires_at: Some(20),
@@ -1221,7 +1227,7 @@ mod tests {
         let subordinate = spawn_packet_soldier(&mut world, true);
         insert_command_forest(&mut world, leader, subordinate);
         let directive = TaskDirective::HoldStation {
-            mission_id: MissionId(2),
+            plan_id: CommandPlanId(2),
             station: PositionTarget::new(Vec2::X, None),
             fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
@@ -1263,7 +1269,7 @@ mod tests {
                     created_tick: 9,
                     payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
                         directive: TaskDirective::HoldStation {
-                            mission_id: MissionId(2),
+                            plan_id: CommandPlanId(2),
                             station: PositionTarget::new(Vec2::X, None),
                             fallback: PositionTarget::new(Vec2::ZERO, None),
                             expires_at: Some(10),

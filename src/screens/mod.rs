@@ -1,18 +1,18 @@
 #![doc = include_str!("../../docs/screens.md")]
 
 pub mod main_menu;
-pub mod scenario;
-pub mod scenario_brief;
-pub mod scenario_select;
+pub mod mission;
+pub mod mission_brief;
+pub mod mission_select;
 pub mod settings;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use bevy::prelude::*;
 
 use main_menu::MainMenuScreenPlugin;
-use scenario::ScenarioScreenPlugin;
-use scenario_brief::ScenarioBriefScreenPlugin;
-use scenario_select::ScenarioSelectScreenPlugin;
+use mission::MissionScreenPlugin;
+use mission_brief::MissionBriefScreenPlugin;
+use mission_select::MissionSelectScreenPlugin;
 use settings::SettingsScreenPlugin;
 
 pub struct ScreensPluginGroup;
@@ -22,9 +22,9 @@ impl PluginGroup for ScreensPluginGroup {
         PluginGroupBuilder::start::<Self>()
             .add(ScreenInfrastructurePlugin)
             .add(MainMenuScreenPlugin)
-            .add(ScenarioSelectScreenPlugin)
-            .add(ScenarioBriefScreenPlugin)
-            .add(ScenarioScreenPlugin)
+            .add(MissionSelectScreenPlugin)
+            .add(MissionBriefScreenPlugin)
+            .add(MissionScreenPlugin)
             .add(SettingsScreenPlugin)
     }
 }

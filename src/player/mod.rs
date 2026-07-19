@@ -2,13 +2,13 @@
 
 pub mod control;
 pub mod knowledge;
-pub mod mission_placement;
+pub mod plan_placement;
 pub mod selection;
 
 use bevy::app::{PluginGroup, PluginGroupBuilder};
 use control::PlayerControlPlugin;
 use knowledge::PlayerKnowledgePlugin;
-use mission_placement::MissionPlacementPlugin;
+use plan_placement::PlanPlacementPlugin;
 use selection::SelectionPlugin;
 
 pub struct PlayerPlugins;
@@ -18,7 +18,7 @@ impl PluginGroup for PlayerPlugins {
         PluginGroupBuilder::start::<Self>()
             .add(PlayerControlPlugin)
             .add(PlayerKnowledgePlugin)
-            .add(MissionPlacementPlugin)
+            .add(PlanPlacementPlugin)
             .add(SelectionPlugin)
     }
 }

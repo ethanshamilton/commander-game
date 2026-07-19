@@ -1,7 +1,7 @@
 use super::state::PlannerState;
 use crate::ai::perception::ContactKind;
 use crate::gameplay::combat::CombatOrder;
-use crate::gameplay::missions::{MissionId, PendingTaskAssignment, TaskDirective};
+use crate::gameplay::command_plans::{CommandPlanId, PendingTaskAssignment, TaskDirective};
 use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
 use crate::gameplay::simulation::MovementOrder;
 use crate::gameplay::spatial::PositionTarget;
@@ -22,8 +22,8 @@ pub enum BoundOperator {
         target: Entity,
     },
     DelegateHoldStation {
-        mission_id: MissionId,
-        mission_issued_tick: u64,
+        plan_id: CommandPlanId,
+        plan_issued_tick: u64,
         assignee: Entity,
         station: PositionTarget,
         fallback: PositionTarget,
@@ -88,18 +88,18 @@ impl BoundOperator {
                     .insert((CombatOrder::FireAt { target }, CombatOrderSource::htn()));
             }
             BoundOperator::DelegateHoldStation {
-                mission_id,
-                mission_issued_tick,
+                plan_id,
+                plan_issued_tick,
                 assignee,
                 station,
                 fallback,
                 expires_at,
             } => {
                 commands.entity(entity).insert(PendingTaskAssignment {
-                    mission_issued_tick,
+                    plan_issued_tick,
                     assignee,
                     directive: TaskDirective::HoldStation {
-                        mission_id,
+                        plan_id,
                         station,
                         fallback,
                         expires_at,
@@ -121,18 +121,18 @@ impl BoundOperator {
             BoundOperator::MoveTo { target } => poll_move(target, movement_order),
             BoundOperator::FireAt { target } => poll_fire(target, combat_order, state),
             BoundOperator::DelegateHoldStation {
-                mission_id,
-                mission_issued_tick,
+                plan_id,
+                plan_issued_tick,
                 assignee,
                 ..
             } => {
-                if state.has_delegated_to((mission_id, mission_issued_tick), assignee) {
+                if state.has_delegated_to((plan_id, plan_issued_tick), assignee) {
                     StepPoll::Succeeded
                 } else if state
-                    .assigned_mission
-                    .is_none_or(|mission| mission.identity() != (mission_id, mission_issued_tick))
+                    .assigned_plan
+                    .is_none_or(|plan| plan.identity() != (plan_id, plan_issued_tick))
                 {
-                    StepPoll::Failed("assigned mission changed during delegation")
+                    StepPoll::Failed("assigned plan changed during delegation")
                 } else {
                     StepPoll::Running
                 }

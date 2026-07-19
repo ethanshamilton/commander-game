@@ -23,7 +23,7 @@ impl Plugin for UnitRenderingPlugin {
             Update,
             draw_units
                 .in_set(RenderingSet::Units)
-                .run_if(in_state(GameState::ScenarioScreen)),
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

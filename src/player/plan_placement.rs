@@ -1,11 +1,11 @@
-#![doc = include_str!("../../docs/player/mission_placement.md")]
+#![doc = include_str!("../../docs/player/plan_placement.md")]
 
 use crate::GameState;
-use crate::gameplay::missions::{
-    MissionArea, MissionAssignees, MissionIdAllocator, MissionKind, MissionPlan, TacticalMission,
+use crate::gameplay::command_plans::{
+    CommandPlan, CommandPlanArea, CommandPlanAssignees, CommandPlanIdAllocator, CommandPlanKind,
 };
 use crate::gameplay::simulation::{SIMULATION_TICK_HZ, SimulationClock};
-use crate::screens::scenario::ScenarioScoped;
+use crate::screens::mission::MissionScoped;
 use crate::ui::active_action::ActiveAction;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -16,7 +16,7 @@ const INFO_PANEL_WIDTH_PX: f32 = 240.0;
 pub const SIMULATION_TICKS_PER_MINUTE: u64 = SIMULATION_TICK_HZ as u64 * 60;
 
 /// Convert a player-entered duration to ticks. Zero deliberately means that
-/// the mission has no expiration.
+/// the plan has no expiration.
 pub fn expiry_duration_ticks(minutes: u64) -> Result<Option<u64>, &'static str> {
     if minutes == 0 {
         return Ok(None);
@@ -27,47 +27,47 @@ pub fn expiry_duration_ticks(minutes: u64) -> Result<Option<u64>, &'static str> 
         .ok_or("expiry duration is too large")
 }
 
-pub struct MissionPlacementPlugin;
+pub struct PlanPlacementPlugin;
 
-impl Plugin for MissionPlacementPlugin {
+impl Plugin for PlanPlacementPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MissionPlacementState>()
-            .init_resource::<SelectedMission>()
-            .init_resource::<MissionLabelAllocator>()
+        app.init_resource::<PlanPlacementState>()
+            .init_resource::<SelectedPlan>()
+            .init_resource::<PlanLabelAllocator>()
             .configure_sets(
                 Update,
-                (PlayerInputSet::MissionPlacement, PlayerInputSet::Selection).chain(),
+                (PlayerInputSet::PlanPlacement, PlayerInputSet::Selection).chain(),
             )
             .add_systems(
                 Update,
                 (
-                    cancel_mission_placement,
+                    cancel_plan_placement,
                     place_hold_line_points,
-                    refresh_selected_mission,
-                    sync_mission_active_action,
+                    refresh_selected_plan,
+                    sync_plan_active_action,
                 )
                     .chain()
-                    .in_set(PlayerInputSet::MissionPlacement)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .in_set(PlayerInputSet::PlanPlacement)
+                    .run_if(in_state(GameState::MissionScreen)),
             )
-            .add_systems(OnExit(GameState::ScenarioScreen), reset_mission_ui_state);
+            .add_systems(OnExit(GameState::MissionScreen), reset_plan_ui_state);
     }
 }
 
 /// The in-progress map-placement interaction. `None` means ordinary selection
 /// and contextual orders may consume map clicks.
 #[derive(Resource, Debug, Default, Clone)]
-pub struct MissionPlacementState {
-    pub active: Option<MissionPlacement>,
+pub struct PlanPlacementState {
+    pub active: Option<PlanPlacement>,
 }
 
-impl MissionPlacementState {
+impl PlanPlacementState {
     pub fn is_active(&self) -> bool {
         self.active.is_some()
     }
 
     pub fn begin_hold_line(&mut self, expiry_duration_ticks: Option<u64>) {
-        self.active = Some(MissionPlacement::hold_line(expiry_duration_ticks));
+        self.active = Some(PlanPlacement::hold_line(expiry_duration_ticks));
     }
 
     pub fn cancel(&mut self) {
@@ -76,19 +76,19 @@ impl MissionPlacementState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct MissionPlacement {
-    pub kind: MissionKind,
+pub struct PlanPlacement {
+    pub kind: CommandPlanKind,
     pub phase: HoldLinePlacementPhase,
     pub line_start_m: Option<Vec2>,
     pub line_end_m: Option<Vec2>,
-    /// `None` means the mission does not expire.
+    /// `None` means the plan does not expire.
     pub expiry_duration_ticks: Option<u64>,
 }
 
-impl MissionPlacement {
+impl PlanPlacement {
     pub fn hold_line(expiry_duration_ticks: Option<u64>) -> Self {
         Self {
-            kind: MissionKind::HoldLine,
+            kind: CommandPlanKind::HoldLine,
             phase: HoldLinePlacementPhase::LineStart,
             line_start_m: None,
             line_end_m: None,
@@ -112,25 +112,25 @@ pub enum HoldLinePlacementPhase {
     RallyPoint,
 }
 
-/// Tactical mission selected for future assignment and highlighted in overlays.
+/// Tactical plan selected for future assignment and highlighted in overlays.
 #[derive(Resource, Debug, Default, Clone, Copy)]
-pub struct SelectedMission {
-    /// The tactical mission currently chosen for actions such as assignment.
+pub struct SelectedPlan {
+    /// The tactical plan currently chosen for actions such as assignment.
     pub entity: Option<Entity>,
-    /// True only while the mission list explicitly previews this mission.
+    /// True only while the plan list explicitly previews this plan.
     pub preview: bool,
-    /// Selecting a mission enables assignment to the next valid map unit click.
+    /// Selecting a plan enables assignment to the next valid map unit click.
     pub assignment_mode: bool,
 }
 
-/// Orders player-visible labels independently of scenario-local mission IDs.
+/// Orders player-visible labels independently of mission-local plan IDs.
 #[derive(Resource, Debug, Default)]
-pub struct MissionLabelAllocator {
+pub struct PlanLabelAllocator {
     next: u64,
 }
 
-impl MissionLabelAllocator {
-    pub fn next_label(&mut self, kind: MissionKind) -> String {
+impl PlanLabelAllocator {
+    pub fn next_label(&mut self, kind: CommandPlanKind) -> String {
         self.next += 1;
         format!("{} {}", kind.display_name(), self.next)
     }
@@ -142,14 +142,14 @@ impl MissionLabelAllocator {
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlayerInputSet {
-    MissionPlacement,
+    PlanPlacement,
     Selection,
 }
 
-fn cancel_mission_placement(
+fn cancel_plan_placement(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut placement: ResMut<MissionPlacementState>,
-    mut selected: ResMut<SelectedMission>,
+    mut placement: ResMut<PlanPlacementState>,
+    mut selected: ResMut<SelectedPlan>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
         placement.cancel();
@@ -164,10 +164,10 @@ fn place_hold_line_points(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     clock: Res<SimulationClock>,
-    mut ids: ResMut<MissionIdAllocator>,
-    mut labels: ResMut<MissionLabelAllocator>,
-    mut placement: ResMut<MissionPlacementState>,
-    mut selected: ResMut<SelectedMission>,
+    mut ids: ResMut<CommandPlanIdAllocator>,
+    mut labels: ResMut<PlanLabelAllocator>,
+    mut placement: ResMut<PlanPlacementState>,
+    mut selected: ResMut<SelectedPlan>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Left) {
         return;
@@ -180,7 +180,7 @@ fn place_hold_line_points(
         return;
     };
 
-    debug_assert_eq!(active.kind, MissionKind::HoldLine);
+    debug_assert_eq!(active.kind, CommandPlanKind::HoldLine);
     match active.phase {
         HoldLinePlacementPhase::LineStart => {
             active.line_start_m = Some(point_m);
@@ -203,7 +203,7 @@ fn place_hold_line_points(
             let expires_at = match active.expiry_duration_ticks {
                 Some(duration) => {
                     let Some(expires_at) = clock.tick.checked_add(duration) else {
-                        warn!("discarded tactical mission with overflowing expiry");
+                        warn!("discarded tactical plan with overflowing expiry");
                         placement.cancel();
                         return;
                     };
@@ -214,7 +214,7 @@ fn place_hold_line_points(
             let id = ids.allocate();
             let plan = hold_line_plan(
                 id,
-                labels.next_label(MissionKind::HoldLine),
+                labels.next_label(CommandPlanKind::HoldLine),
                 from_m,
                 to_m,
                 point_m,
@@ -223,17 +223,16 @@ fn place_hold_line_points(
             );
 
             if let Err(error) = plan.validate() {
-                warn!(?error, "discarded invalid tactical mission placement");
+                warn!(?error, "discarded invalid tactical plan placement");
                 placement.cancel();
                 return;
             }
 
             let entity = commands
                 .spawn((
-                    TacticalMission,
-                    ScenarioScoped,
+                    MissionScoped,
                     Name::new(plan.label.clone()),
-                    MissionAssignees::default(),
+                    CommandPlanAssignees::default(),
                     plan,
                 ))
                 .id();
@@ -246,32 +245,29 @@ fn place_hold_line_points(
 }
 
 fn hold_line_plan(
-    id: crate::gameplay::missions::MissionId,
+    id: crate::gameplay::command_plans::CommandPlanId,
     label: String,
     from_m: Vec2,
     to_m: Vec2,
     rally_point_m: Vec2,
     expires_at: Option<u64>,
     created_tick: u64,
-) -> MissionPlan {
-    MissionPlan {
+) -> CommandPlan {
+    CommandPlan {
         id,
         label,
-        kind: MissionKind::HoldLine,
-        area: MissionArea::Line { from_m, to_m },
+        kind: CommandPlanKind::HoldLine,
+        area: CommandPlanArea::Line { from_m, to_m },
         rally_point_m,
         expires_at,
         created_tick,
     }
 }
 
-fn refresh_selected_mission(
-    mut selected: ResMut<SelectedMission>,
-    missions: Query<(), (With<TacticalMission>, With<MissionPlan>)>,
-) {
+fn refresh_selected_plan(mut selected: ResMut<SelectedPlan>, plans: Query<(), With<CommandPlan>>) {
     if selected
         .entity
-        .is_some_and(|entity| missions.get(entity).is_err())
+        .is_some_and(|entity| plans.get(entity).is_err())
     {
         selected.entity = None;
         selected.preview = false;
@@ -279,24 +275,24 @@ fn refresh_selected_mission(
     }
 }
 
-fn sync_mission_active_action(
-    placement: Res<MissionPlacementState>,
-    selected: Res<SelectedMission>,
+fn sync_plan_active_action(
+    placement: Res<PlanPlacementState>,
+    selected: Res<SelectedPlan>,
     mut action: ResMut<ActiveAction>,
 ) {
     if let Some(placement) = placement.active.as_ref() {
         action.set(placement.instruction());
     } else if selected.assignment_mode {
-        action.set("Assign Mission: Select Squad Leader");
+        action.set("Assign Plan: Select Squad Leader");
     } else {
         action.clear();
     }
 }
 
-fn reset_mission_ui_state(
-    mut placement: ResMut<MissionPlacementState>,
-    mut selected: ResMut<SelectedMission>,
-    mut labels: ResMut<MissionLabelAllocator>,
+fn reset_plan_ui_state(
+    mut placement: ResMut<PlanPlacementState>,
+    mut selected: ResMut<SelectedPlan>,
+    mut labels: ResMut<PlanLabelAllocator>,
     mut action: ResMut<ActiveAction>,
 ) {
     placement.cancel();
@@ -345,7 +341,7 @@ mod tests {
 
     #[test]
     fn hold_line_placement_progresses_through_the_expected_instructions() {
-        let mut placement = MissionPlacement::hold_line(Some(300));
+        let mut placement = PlanPlacement::hold_line(Some(300));
         assert_eq!(placement.instruction(), "Create Line Start");
 
         placement.line_start_m = Some(Vec2::ZERO);
@@ -360,7 +356,7 @@ mod tests {
     #[test]
     fn completed_hold_line_placement_builds_a_valid_plan() {
         let plan = hold_line_plan(
-            crate::gameplay::missions::MissionId(0),
+            crate::gameplay::command_plans::CommandPlanId(0),
             "Hold Line 1".into(),
             Vec2::new(-5.0, 0.0),
             Vec2::new(5.0, 0.0),
@@ -375,9 +371,9 @@ mod tests {
     }
 
     #[test]
-    fn escape_cancels_assignment_mode_without_discarding_the_selected_mission() {
-        let mut placement = MissionPlacementState::default();
-        let mut selected = SelectedMission {
+    fn escape_cancels_assignment_mode_without_discarding_the_selected_plan() {
+        let mut placement = PlanPlacementState::default();
+        let mut selected = SelectedPlan {
             entity: Some(Entity::PLACEHOLDER),
             preview: true,
             assignment_mode: true,
@@ -393,11 +389,11 @@ mod tests {
     }
 
     #[test]
-    fn mission_ui_state_is_reset_on_scenario_exit() {
-        let mut placement = MissionPlacementState {
-            active: Some(MissionPlacement::hold_line(None)),
+    fn plan_ui_state_is_reset_on_mission_exit() {
+        let mut placement = PlanPlacementState {
+            active: Some(PlanPlacement::hold_line(None)),
         };
-        let mut selected = SelectedMission {
+        let mut selected = SelectedPlan {
             entity: Some(Entity::PLACEHOLDER),
             preview: true,
             assignment_mode: true,

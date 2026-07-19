@@ -1,4 +1,4 @@
-#![doc = include_str!("../../docs/gameplay/missions.md")]
+#![doc = include_str!("../../docs/gameplay/command_plans.md")]
 
 use crate::GameState;
 use crate::actors::units::{Alive, Soldier};
@@ -8,50 +8,47 @@ use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
 use bevy::prelude::*;
 
-/// Tactical missions are persistent intent-bearing plans created during a
-/// scenario. They are deliberately distinct from authored `ScenarioDefinition`
+/// Tactical plans are persistent intent-bearing plans created during a
+/// plan. They are deliberately distinct from authored `MissionDefinition`
 /// data and never install concrete action orders directly.
-pub struct MissionsPlugin;
+pub struct CommandPlansPlugin;
 
-impl Plugin for MissionsPlugin {
+impl Plugin for CommandPlansPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MissionIdAllocator>()
-            .add_message::<MissionAssignmentRequested>()
-            .add_systems(
-                OnEnter(GameState::ScenarioScreen),
-                reset_mission_id_allocator,
-            )
+        app.init_resource::<CommandPlanIdAllocator>()
+            .add_message::<CommandPlanAssignmentRequested>()
+            .add_systems(OnEnter(GameState::MissionScreen), reset_plan_id_allocator)
             .add_systems(
                 Update,
-                apply_mission_assignment_requests.run_if(in_state(GameState::ScenarioScreen)),
+                apply_plan_assignment_requests.run_if(in_state(GameState::MissionScreen)),
             )
             .add_systems(
                 FixedUpdate,
                 transmit_pending_task_assignments
                     .in_set(SimulationSet::Thinking)
                     .before(crate::ai::htn::synthesis::synthesize_beliefs)
-                    .run_if(in_state(GameState::ScenarioScreen)),
+                    .run_if(in_state(GameState::MissionScreen)),
             );
     }
 }
 
-/// Stable, scenario-local identifier for a tactical mission.
+/// Stable, mission-local identifier for a command plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct MissionId(pub u64);
+pub struct CommandPlanId(pub u64);
 
-/// Allocates monotonically increasing tactical mission IDs within one scenario.
+/// Allocates monotonically increasing command-plan IDs within one mission.
 #[derive(Resource, Debug, Default)]
-pub struct MissionIdAllocator {
+pub struct CommandPlanIdAllocator {
     next: u64,
 }
 
-impl MissionIdAllocator {
-    pub fn allocate(&mut self) -> MissionId {
-        let id = MissionId(self.next);
+impl CommandPlanIdAllocator {
+    pub fn allocate(&mut self) -> CommandPlanId {
+        let id = CommandPlanId(self.next);
         self.next = self
             .next
             .checked_add(1)
-            .expect("tactical mission ID allocator exhausted");
+            .expect("tactical plan ID allocator exhausted");
         id
     }
 
@@ -60,21 +57,21 @@ impl MissionIdAllocator {
     }
 }
 
-fn reset_mission_id_allocator(mut allocator: ResMut<MissionIdAllocator>) {
+fn reset_plan_id_allocator(mut allocator: ResMut<CommandPlanIdAllocator>) {
     allocator.reset();
 }
 
-/// Geometry defining where a tactical mission is to be executed. All positions
+/// Geometry defining where a command plan is to be executed. All positions
 /// are in meters, not Bevy render units.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MissionArea {
+pub enum CommandPlanArea {
     Line { from_m: Vec2, to_m: Vec2 },
     Point { center_m: Vec2 },
     Circle { center_m: Vec2, radius_m: f32 },
     Rect { min_m: Vec2, max_m: Vec2 },
 }
 
-impl MissionArea {
+impl CommandPlanArea {
     pub fn shape_name(&self) -> &'static str {
         match self {
             Self::Line { .. } => "line",
@@ -84,30 +81,30 @@ impl MissionArea {
         }
     }
 
-    fn validate_geometry(&self) -> Result<(), MissionValidationError> {
+    fn validate_geometry(&self) -> Result<(), CommandPlanValidationError> {
         match self {
             Self::Line { from_m, to_m } => {
                 validate_finite_point("line start", *from_m)?;
                 validate_finite_point("line end", *to_m)?;
                 if from_m.distance_squared(*to_m) <= f32::EPSILON {
-                    return Err(MissionValidationError::DegenerateLine);
+                    return Err(CommandPlanValidationError::DegenerateLine);
                 }
             }
             Self::Point { center_m } => validate_finite_point("point center", *center_m)?,
             Self::Circle { center_m, radius_m } => {
                 validate_finite_point("circle center", *center_m)?;
                 if !radius_m.is_finite() {
-                    return Err(MissionValidationError::NonFiniteRadius);
+                    return Err(CommandPlanValidationError::NonFiniteRadius);
                 }
                 if *radius_m <= 0.0 {
-                    return Err(MissionValidationError::NonPositiveRadius);
+                    return Err(CommandPlanValidationError::NonPositiveRadius);
                 }
             }
             Self::Rect { min_m, max_m } => {
                 validate_finite_point("rectangle minimum", *min_m)?;
                 validate_finite_point("rectangle maximum", *max_m)?;
                 if min_m.x >= max_m.x || min_m.y >= max_m.y {
-                    return Err(MissionValidationError::DegenerateOrUnnormalizedRect);
+                    return Err(CommandPlanValidationError::DegenerateOrUnnormalizedRect);
                 }
             }
         }
@@ -116,14 +113,14 @@ impl MissionArea {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MissionKind {
+pub enum CommandPlanKind {
     HoldLine,
     SecurePerimeter,
     ScoutArea,
     ClearArea,
 }
 
-impl MissionKind {
+impl CommandPlanKind {
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::HoldLine => "Hold Line",
@@ -133,45 +130,45 @@ impl MissionKind {
         }
     }
 
-    pub fn accepts_area(self, area: &MissionArea) -> bool {
+    pub fn accepts_area(self, area: &CommandPlanArea) -> bool {
         matches!(
             (self, area),
-            (Self::HoldLine, MissionArea::Line { .. })
+            (Self::HoldLine, CommandPlanArea::Line { .. })
                 | (
                     Self::SecurePerimeter,
-                    MissionArea::Circle { .. } | MissionArea::Rect { .. }
+                    CommandPlanArea::Circle { .. } | CommandPlanArea::Rect { .. }
                 )
                 | (
                     Self::ScoutArea,
-                    MissionArea::Point { .. }
-                        | MissionArea::Circle { .. }
-                        | MissionArea::Rect { .. }
+                    CommandPlanArea::Point { .. }
+                        | CommandPlanArea::Circle { .. }
+                        | CommandPlanArea::Rect { .. }
                 )
                 | (
                     Self::ClearArea,
-                    MissionArea::Point { .. }
-                        | MissionArea::Circle { .. }
-                        | MissionArea::Rect { .. }
+                    CommandPlanArea::Point { .. }
+                        | CommandPlanArea::Circle { .. }
+                        | CommandPlanArea::Rect { .. }
                 )
         )
     }
 }
 
-/// Persistent player-authored tactical mission plan.
+/// Persistent player-authored command plan.
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct MissionPlan {
-    pub id: MissionId,
+pub struct CommandPlan {
+    pub id: CommandPlanId,
     pub label: String,
-    pub kind: MissionKind,
-    pub area: MissionArea,
+    pub kind: CommandPlanKind,
+    pub area: CommandPlanArea,
     pub rally_point_m: Vec2,
     pub expires_at: Option<u64>,
     pub created_tick: u64,
 }
 
-impl MissionPlan {
-    pub fn validate(&self) -> Result<(), MissionValidationError> {
-        validate_mission_fields(
+impl CommandPlan {
+    pub fn validate(&self) -> Result<(), CommandPlanValidationError> {
+        validate_plan_fields(
             &self.label,
             self.kind,
             &self.area,
@@ -181,8 +178,8 @@ impl MissionPlan {
         )
     }
 
-    pub fn snapshot(&self) -> MissionSnapshot {
-        MissionSnapshot {
+    pub fn snapshot(&self) -> CommandPlanSnapshot {
+        CommandPlanSnapshot {
             id: self.id,
             label: self.label.clone(),
             kind: self.kind,
@@ -194,36 +191,29 @@ impl MissionPlan {
     }
 }
 
-/// Marks an entity as a tactical mission world object rather than an authored
-/// scenario entity or a unit. It should be paired with `ScenarioScoped` when
-/// missions are spawned so scenario cleanup despawns it.
-#[allow(dead_code)] // Constructed by milestone C mission placement.
-#[derive(Component, Debug, Default, Clone, Copy)]
-pub struct TacticalMission;
-
-/// Persistent local record of which units the player assigned to a mission.
+/// Persistent local record of which units the player assigned to a plan.
 #[allow(dead_code)] // Constructed by milestone C and mutated by milestone D.
 #[derive(Component, Debug, Default, Clone, PartialEq, Eq)]
-pub struct MissionAssignees {
+pub struct CommandPlanAssignees {
     pub assignees: Vec<Entity>,
 }
 
-/// Copy of a mission plan that is safe to transmit through the comms substrate.
+/// Copy of a command plan that is safe to transmit through the comms substrate.
 /// It contains no local Bevy entity reference.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MissionSnapshot {
-    pub id: MissionId,
+pub struct CommandPlanSnapshot {
+    pub id: CommandPlanId,
     pub label: String,
-    pub kind: MissionKind,
-    pub area: MissionArea,
+    pub kind: CommandPlanKind,
+    pub area: CommandPlanArea,
     pub rally_point_m: Vec2,
     pub expires_at: Option<u64>,
     pub created_tick: u64,
 }
 
-impl MissionSnapshot {
-    pub fn validate(&self) -> Result<(), MissionValidationError> {
-        validate_mission_fields(
+impl CommandPlanSnapshot {
+    pub fn validate(&self) -> Result<(), CommandPlanValidationError> {
+        validate_plan_fields(
             &self.label,
             self.kind,
             &self.area,
@@ -234,40 +224,40 @@ impl MissionSnapshot {
     }
 }
 
-/// Mission intent installed on the receiving leader after a valid assignment
+/// CommandPlan intent installed on the receiving leader after a valid assignment
 /// packet arrives. This is an HTN input, never a concrete action order.
 #[allow(dead_code)] // Installed by milestone D packet handling.
 #[derive(Component, Debug, Clone, PartialEq)]
-pub struct AssignedMission {
-    pub mission: MissionSnapshot,
+pub struct AssignedCommandPlan {
+    pub plan: CommandPlanSnapshot,
     pub assigned_by: Entity,
     pub issued_tick: u64,
     pub received_tick: u64,
 }
 
-/// Packet-safe intent assignment sent from a commander to a mission recipient.
+/// Packet-safe intent assignment sent from a commander to a plan recipient.
 #[derive(Debug, Clone, PartialEq)]
-pub struct MissionAssignmentMessage {
-    pub mission: MissionSnapshot,
+pub struct CommandPlanAssignmentMessage {
+    pub plan: CommandPlanSnapshot,
     pub issued_tick: u64,
 }
 
-/// Requests a mission assignment from any UI or future AI commander. The
+/// Requests a plan assignment from any UI or future AI commander. The
 /// consumer validates authority and then either installs it locally or sends it
 /// through the physical comms substrate.
 #[derive(Message, Debug, Clone, Copy)]
-pub struct MissionAssignmentRequested {
-    pub mission: Entity,
+pub struct CommandPlanAssignmentRequested {
+    pub plan: Entity,
     pub issuer: Entity,
     pub assignee: Entity,
 }
 
-/// A subordinate planning directive. Like a mission, this is an HTN input and
+/// A subordinate planning directive. Like a plan, this is an HTN input and
 /// never a concrete movement/combat order.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TaskDirective {
     HoldStation {
-        mission_id: MissionId,
+        plan_id: CommandPlanId,
         station: PositionTarget,
         fallback: PositionTarget,
         expires_at: Option<u64>,
@@ -287,9 +277,9 @@ impl TaskDirective {
         Ok(())
     }
 
-    pub fn mission_id(self) -> MissionId {
+    pub fn plan_id(self) -> CommandPlanId {
         match self {
-            Self::HoldStation { mission_id, .. } => mission_id,
+            Self::HoldStation { plan_id, .. } => plan_id,
         }
     }
 
@@ -347,7 +337,7 @@ pub fn should_install_task_assignment(
 /// bridge on the following simulation pass.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct PendingTaskAssignment {
-    pub mission_issued_tick: u64,
+    pub plan_issued_tick: u64,
     pub assignee: Entity,
     pub directive: TaskDirective,
 }
@@ -355,56 +345,56 @@ pub struct PendingTaskAssignment {
 /// Durable memory of delegation side effects. It prevents replanning from
 /// retransmitting the same subordinate task every tick.
 #[derive(Component, Debug, Default, Clone, PartialEq, Eq)]
-pub struct MissionDelegationProgress {
-    pub mission: Option<(MissionId, u64)>,
+pub struct CommandPlanDelegationProgress {
+    pub plan: Option<(CommandPlanId, u64)>,
     pub delegated_to: Vec<Entity>,
 }
 
-impl MissionDelegationProgress {
-    pub fn reset_for(&mut self, mission_id: MissionId, issued_tick: u64) {
-        let identity = (mission_id, issued_tick);
-        if self.mission != Some(identity) {
-            self.mission = Some(identity);
+impl CommandPlanDelegationProgress {
+    pub fn reset_for(&mut self, plan_id: CommandPlanId, issued_tick: u64) {
+        let identity = (plan_id, issued_tick);
+        if self.plan != Some(identity) {
+            self.plan = Some(identity);
             self.delegated_to.clear();
         }
     }
 }
 
-fn mission_is_assignable(plan: &MissionPlan, tick: u64) -> bool {
+fn plan_is_assignable(plan: &CommandPlan, tick: u64) -> bool {
     plan.validate().is_ok() && plan.expires_at.is_none_or(|expires_at| expires_at > tick)
 }
 
-fn apply_mission_assignment_requests(
+fn apply_plan_assignment_requests(
     mut commands: Commands,
-    mut requests: MessageReader<MissionAssignmentRequested>,
+    mut requests: MessageReader<CommandPlanAssignmentRequested>,
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
     mut packet_ids: ResMut<PacketIdAllocator>,
-    mut missions: Query<(&MissionPlan, &mut MissionAssignees), With<TacticalMission>>,
+    mut plans: Query<(&CommandPlan, &mut CommandPlanAssignees)>,
     soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut transmitters: Query<(&mut Outbox, &mut SeenPackets), (With<Soldier>, With<Alive>)>,
-    assignments: Query<&AssignedMission>,
+    assignments: Query<&AssignedCommandPlan>,
 ) {
     for request in requests.read().copied() {
-        let Ok((plan, mut assignees)) = missions.get_mut(request.mission) else {
-            warn!(?request, "mission assignment rejected: unknown mission");
+        let Ok((plan, mut assignees)) = plans.get_mut(request.plan) else {
+            warn!(?request, "plan assignment rejected: unknown plan");
             continue;
         };
-        if !mission_is_assignable(plan, clock.tick)
+        if !plan_is_assignable(plan, clock.tick)
             || soldiers.get(request.issuer).is_err()
             || soldiers.get(request.assignee).is_err()
             || !command_forest.can_command(request.issuer, request.assignee)
         {
             warn!(
                 ?request,
-                "mission assignment rejected: invalid mission, unit, or authority"
+                "plan assignment rejected: invalid plan, unit, or authority"
             );
             continue;
         }
         if command_forest.subordinates_of(request.assignee).is_empty() {
             warn!(
                 ?request,
-                "mission assignment rejected: assignee is not a squad leader"
+                "plan assignment rejected: assignee is not a squad leader"
             );
             continue;
         }
@@ -412,25 +402,24 @@ fn apply_mission_assignment_requests(
             continue;
         }
 
-        let message = MissionAssignmentMessage {
-            mission: plan.snapshot(),
+        let message = CommandPlanAssignmentMessage {
+            plan: plan.snapshot(),
             issued_tick: clock.tick,
         };
         if request.issuer == request.assignee {
             if should_install_assignment(assignments.get(request.assignee).ok(), &message) {
-                commands.entity(request.assignee).insert(AssignedMission {
-                    mission: message.mission,
-                    assigned_by: request.issuer,
-                    issued_tick: message.issued_tick,
-                    received_tick: clock.tick,
-                });
+                commands
+                    .entity(request.assignee)
+                    .insert(AssignedCommandPlan {
+                        plan: message.plan,
+                        assigned_by: request.issuer,
+                        issued_tick: message.issued_tick,
+                        received_tick: clock.tick,
+                    });
             }
         } else {
             let Ok((mut outbox, mut seen)) = transmitters.get_mut(request.issuer) else {
-                warn!(
-                    ?request,
-                    "mission assignment rejected: issuer cannot transmit"
-                );
+                warn!(?request, "plan assignment rejected: issuer cannot transmit");
                 continue;
             };
             outbox.send(
@@ -439,7 +428,7 @@ fn apply_mission_assignment_requests(
                 request.issuer,
                 Address::Direct(request.assignee),
                 clock.tick,
-                PacketPayload::MissionAssignment(message),
+                PacketPayload::CommandPlanAssignment(message),
             );
         }
         assignees.assignees.push(request.assignee);
@@ -455,14 +444,14 @@ fn transmit_pending_task_assignments(
     mut leaders: Query<(
         Entity,
         &PendingTaskAssignment,
-        &mut MissionDelegationProgress,
+        &mut CommandPlanDelegationProgress,
         &mut Outbox,
         &mut SeenPackets,
     )>,
 ) {
     for (leader, pending, mut progress, mut outbox, mut seen) in &mut leaders {
-        let mission_id = pending.directive.mission_id();
-        progress.reset_for(mission_id, pending.mission_issued_tick);
+        let plan_id = pending.directive.plan_id();
+        progress.reset_for(plan_id, pending.plan_issued_tick);
 
         if !progress.delegated_to.contains(&pending.assignee) {
             if pending.assignee == leader {
@@ -495,7 +484,7 @@ fn transmit_pending_task_assignments(
             }
 
             // A dead/removed subordinate is also considered processed so the
-            // leader can continue decomposing the rest of the mission.
+            // leader can continue decomposing the rest of the plan.
             progress.delegated_to.push(pending.assignee);
         }
         commands.entity(leader).remove::<PendingTaskAssignment>();
@@ -504,17 +493,17 @@ fn transmit_pending_task_assignments(
 
 /// True if an incoming assignment is newer than the one already installed.
 pub fn should_install_assignment(
-    current: Option<&AssignedMission>,
-    incoming: &MissionAssignmentMessage,
+    current: Option<&AssignedCommandPlan>,
+    incoming: &CommandPlanAssignmentMessage,
 ) -> bool {
     current.is_none_or(|current| incoming.issued_tick > current.issued_tick)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MissionValidationError {
+pub enum CommandPlanValidationError {
     EmptyLabel,
     IncompatibleArea {
-        kind: MissionKind,
+        kind: CommandPlanKind,
         shape: &'static str,
     },
     NonFinitePoint {
@@ -530,19 +519,19 @@ pub enum MissionValidationError {
     },
 }
 
-fn validate_mission_fields(
+fn validate_plan_fields(
     label: &str,
-    kind: MissionKind,
-    area: &MissionArea,
+    kind: CommandPlanKind,
+    area: &CommandPlanArea,
     rally_point_m: Vec2,
     expires_at: Option<u64>,
     created_tick: u64,
-) -> Result<(), MissionValidationError> {
+) -> Result<(), CommandPlanValidationError> {
     if label.trim().is_empty() {
-        return Err(MissionValidationError::EmptyLabel);
+        return Err(CommandPlanValidationError::EmptyLabel);
     }
     if !kind.accepts_area(area) {
-        return Err(MissionValidationError::IncompatibleArea {
+        return Err(CommandPlanValidationError::IncompatibleArea {
             kind,
             shape: area.shape_name(),
         });
@@ -554,7 +543,7 @@ fn validate_mission_fields(
     if let Some(expires_at) = expires_at
         && expires_at <= created_tick
     {
-        return Err(MissionValidationError::ExpiryNotAfterCreation {
+        return Err(CommandPlanValidationError::ExpiryNotAfterCreation {
             expires_at,
             created_tick,
         });
@@ -563,11 +552,14 @@ fn validate_mission_fields(
     Ok(())
 }
 
-fn validate_finite_point(field: &'static str, point: Vec2) -> Result<(), MissionValidationError> {
+fn validate_finite_point(
+    field: &'static str,
+    point: Vec2,
+) -> Result<(), CommandPlanValidationError> {
     if point.is_finite() {
         Ok(())
     } else {
-        Err(MissionValidationError::NonFinitePoint { field })
+        Err(CommandPlanValidationError::NonFinitePoint { field })
     }
 }
 
@@ -577,12 +569,12 @@ mod tests {
     use crate::actors::units::{Rank, Role};
     use bevy::ecs::system::RunSystemOnce;
 
-    fn hold_line() -> MissionPlan {
-        MissionPlan {
-            id: MissionId(4),
+    fn hold_line() -> CommandPlan {
+        CommandPlan {
+            id: CommandPlanId(4),
             label: "Alpha line".into(),
-            kind: MissionKind::HoldLine,
-            area: MissionArea::Line {
+            kind: CommandPlanKind::HoldLine,
+            area: CommandPlanArea::Line {
                 from_m: Vec2::new(-10.0, 0.0),
                 to_m: Vec2::new(10.0, 0.0),
             },
@@ -601,67 +593,70 @@ mod tests {
 
     #[test]
     fn kinds_accept_only_supported_area_shapes() {
-        let line = MissionArea::Line {
+        let line = CommandPlanArea::Line {
             from_m: Vec2::ZERO,
             to_m: Vec2::X,
         };
-        let point = MissionArea::Point {
+        let point = CommandPlanArea::Point {
             center_m: Vec2::ZERO,
         };
-        let circle = MissionArea::Circle {
+        let circle = CommandPlanArea::Circle {
             center_m: Vec2::ZERO,
             radius_m: 1.0,
         };
-        let rect = MissionArea::Rect {
+        let rect = CommandPlanArea::Rect {
             min_m: Vec2::ZERO,
             max_m: Vec2::ONE,
         };
 
-        assert!(MissionKind::HoldLine.accepts_area(&line));
-        assert!(!MissionKind::HoldLine.accepts_area(&point));
-        assert!(MissionKind::SecurePerimeter.accepts_area(&circle));
-        assert!(MissionKind::SecurePerimeter.accepts_area(&rect));
-        assert!(!MissionKind::SecurePerimeter.accepts_area(&point));
-        assert!(MissionKind::ScoutArea.accepts_area(&point));
-        assert!(MissionKind::ClearArea.accepts_area(&rect));
+        assert!(CommandPlanKind::HoldLine.accepts_area(&line));
+        assert!(!CommandPlanKind::HoldLine.accepts_area(&point));
+        assert!(CommandPlanKind::SecurePerimeter.accepts_area(&circle));
+        assert!(CommandPlanKind::SecurePerimeter.accepts_area(&rect));
+        assert!(!CommandPlanKind::SecurePerimeter.accepts_area(&point));
+        assert!(CommandPlanKind::ScoutArea.accepts_area(&point));
+        assert!(CommandPlanKind::ClearArea.accepts_area(&rect));
     }
 
     #[test]
     fn validation_rejects_invalid_geometry_and_metadata() {
         let mut plan = hold_line();
-        plan.area = MissionArea::Line {
+        plan.area = CommandPlanArea::Line {
             from_m: Vec2::ZERO,
             to_m: Vec2::ZERO,
         };
-        assert_eq!(plan.validate(), Err(MissionValidationError::DegenerateLine));
-
-        plan = hold_line();
-        plan.area = MissionArea::Circle {
-            center_m: Vec2::ZERO,
-            radius_m: 0.0,
-        };
-        plan.kind = MissionKind::SecurePerimeter;
         assert_eq!(
             plan.validate(),
-            Err(MissionValidationError::NonPositiveRadius)
+            Err(CommandPlanValidationError::DegenerateLine)
         );
 
         plan = hold_line();
-        plan.area = MissionArea::Rect {
+        plan.area = CommandPlanArea::Circle {
+            center_m: Vec2::ZERO,
+            radius_m: 0.0,
+        };
+        plan.kind = CommandPlanKind::SecurePerimeter;
+        assert_eq!(
+            plan.validate(),
+            Err(CommandPlanValidationError::NonPositiveRadius)
+        );
+
+        plan = hold_line();
+        plan.area = CommandPlanArea::Rect {
             min_m: Vec2::new(2.0, 0.0),
             max_m: Vec2::new(1.0, 1.0),
         };
-        plan.kind = MissionKind::ScoutArea;
+        plan.kind = CommandPlanKind::ScoutArea;
         assert_eq!(
             plan.validate(),
-            Err(MissionValidationError::DegenerateOrUnnormalizedRect)
+            Err(CommandPlanValidationError::DegenerateOrUnnormalizedRect)
         );
 
         plan = hold_line();
         plan.rally_point_m = Vec2::new(f32::NAN, 0.0);
         assert_eq!(
             plan.validate(),
-            Err(MissionValidationError::NonFinitePoint {
+            Err(CommandPlanValidationError::NonFinitePoint {
                 field: "rally point"
             })
         );
@@ -670,7 +665,7 @@ mod tests {
         plan.expires_at = Some(plan.created_tick);
         assert_eq!(
             plan.validate(),
-            Err(MissionValidationError::ExpiryNotAfterCreation {
+            Err(CommandPlanValidationError::ExpiryNotAfterCreation {
                 expires_at: 100,
                 created_tick: 100,
             })
@@ -681,42 +676,42 @@ mod tests {
     fn validation_rejects_empty_labels_and_incompatible_areas() {
         let mut plan = hold_line();
         plan.label = " \t".into();
-        assert_eq!(plan.validate(), Err(MissionValidationError::EmptyLabel));
+        assert_eq!(plan.validate(), Err(CommandPlanValidationError::EmptyLabel));
 
         plan = hold_line();
-        plan.area = MissionArea::Point {
+        plan.area = CommandPlanArea::Point {
             center_m: Vec2::ZERO,
         };
         assert_eq!(
             plan.validate(),
-            Err(MissionValidationError::IncompatibleArea {
-                kind: MissionKind::HoldLine,
+            Err(CommandPlanValidationError::IncompatibleArea {
+                kind: CommandPlanKind::HoldLine,
                 shape: "point",
             })
         );
     }
 
     #[test]
-    fn mission_cannot_be_assigned_at_or_after_expiry() {
+    fn plan_cannot_be_assigned_at_or_after_expiry() {
         let plan = hold_line();
-        assert!(mission_is_assignable(&plan, 100));
-        assert!(!mission_is_assignable(&plan, 101));
-        assert!(!mission_is_assignable(&plan, 102));
+        assert!(plan_is_assignable(&plan, 100));
+        assert!(!plan_is_assignable(&plan, 101));
+        assert!(!plan_is_assignable(&plan, 102));
 
         let mut no_expiry = plan;
         no_expiry.expires_at = None;
-        assert!(mission_is_assignable(&no_expiry, u64::MAX));
+        assert!(plan_is_assignable(&no_expiry, u64::MAX));
     }
 
     #[test]
     fn newer_assignment_supersedes_but_equal_or_older_assignments_do_not() {
-        let mission = hold_line().snapshot();
-        let incoming = MissionAssignmentMessage {
-            mission: mission.clone(),
+        let plan = hold_line().snapshot();
+        let incoming = CommandPlanAssignmentMessage {
+            plan: plan.clone(),
             issued_tick: 11,
         };
-        let current = AssignedMission {
-            mission,
+        let current = AssignedCommandPlan {
+            plan,
             assigned_by: Entity::PLACEHOLDER,
             issued_tick: 10,
             received_tick: 10,
@@ -726,8 +721,8 @@ mod tests {
         assert!(should_install_assignment(Some(&current), &incoming));
         assert!(!should_install_assignment(
             Some(&current),
-            &MissionAssignmentMessage {
-                mission: current.mission.clone(),
+            &CommandPlanAssignmentMessage {
+                plan: current.plan.clone(),
                 issued_tick: 10,
             }
         ));
@@ -736,7 +731,7 @@ mod tests {
     #[test]
     fn task_validation_rejects_non_finite_directive_fields() {
         let invalid_station = TaskDirective::HoldStation {
-            mission_id: MissionId(1),
+            plan_id: CommandPlanId(1),
             station: PositionTarget::new(Vec2::new(f32::NAN, 0.0), None),
             fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
@@ -747,7 +742,7 @@ mod tests {
         );
 
         let invalid_fallback = TaskDirective::HoldStation {
-            mission_id: MissionId(1),
+            plan_id: CommandPlanId(1),
             station: PositionTarget::new(Vec2::ZERO, None),
             fallback: PositionTarget::new(Vec2::new(f32::INFINITY, 0.0), None),
             expires_at: None,
@@ -758,7 +753,7 @@ mod tests {
         );
 
         let invalid_facing = TaskDirective::HoldStation {
-            mission_id: MissionId(1),
+            plan_id: CommandPlanId(1),
             station: PositionTarget::new(Vec2::ZERO, Some(f32::INFINITY)),
             fallback: PositionTarget::new(Vec2::ZERO, None),
             expires_at: None,
@@ -784,7 +779,7 @@ mod tests {
             ))
             .id();
         let directive = TaskDirective::HoldStation {
-            mission_id: MissionId(7),
+            plan_id: CommandPlanId(7),
             station: PositionTarget::new(Vec2::X, Some(0.5)),
             fallback: PositionTarget::new(Vec2::NEG_Y, Some(0.5)),
             expires_at: None,
@@ -797,11 +792,11 @@ mod tests {
                 },
                 Alive,
                 PendingTaskAssignment {
-                    mission_issued_tick: 3,
+                    plan_issued_tick: 3,
                     assignee: subordinate,
                     directive,
                 },
-                MissionDelegationProgress::default(),
+                CommandPlanDelegationProgress::default(),
                 Outbox::default(),
                 SeenPackets::default(),
             ))
@@ -815,8 +810,8 @@ mod tests {
             .unwrap();
         world.flush();
 
-        let progress = world.get::<MissionDelegationProgress>(leader).unwrap();
-        assert_eq!(progress.mission, Some((MissionId(7), 3)));
+        let progress = world.get::<CommandPlanDelegationProgress>(leader).unwrap();
+        assert_eq!(progress.plan, Some((CommandPlanId(7), 3)));
         assert_eq!(progress.delegated_to, vec![subordinate]);
         assert!(world.get::<PendingTaskAssignment>(leader).is_none());
         let outbox = world.get::<Outbox>(leader).unwrap();
@@ -831,39 +826,39 @@ mod tests {
 
     #[test]
     fn allocator_is_monotonic_and_resettable() {
-        let mut allocator = MissionIdAllocator::default();
-        assert_eq!(allocator.allocate(), MissionId(0));
-        assert_eq!(allocator.allocate(), MissionId(1));
+        let mut allocator = CommandPlanIdAllocator::default();
+        assert_eq!(allocator.allocate(), CommandPlanId(0));
+        assert_eq!(allocator.allocate(), CommandPlanId(1));
         allocator.reset();
-        assert_eq!(allocator.allocate(), MissionId(0));
+        assert_eq!(allocator.allocate(), CommandPlanId(0));
     }
 
     #[test]
-    fn entering_a_scenario_resets_the_mission_id_allocator() {
+    fn entering_a_plan_resets_the_plan_id_allocator() {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .init_state::<GameState>()
             .init_resource::<CommandForest>()
             .init_resource::<PacketIdAllocator>()
             .init_resource::<SimulationClock>()
-            .add_plugins(MissionsPlugin);
+            .add_plugins(CommandPlansPlugin);
 
         {
-            let mut allocator = app.world_mut().resource_mut::<MissionIdAllocator>();
-            assert_eq!(allocator.allocate(), MissionId(0));
-            assert_eq!(allocator.allocate(), MissionId(1));
+            let mut allocator = app.world_mut().resource_mut::<CommandPlanIdAllocator>();
+            assert_eq!(allocator.allocate(), CommandPlanId(0));
+            assert_eq!(allocator.allocate(), CommandPlanId(1));
         }
 
         app.world_mut()
             .resource_mut::<NextState<GameState>>()
-            .set(GameState::ScenarioScreen);
+            .set(GameState::MissionScreen);
         app.update();
 
         assert_eq!(
             app.world_mut()
-                .resource_mut::<MissionIdAllocator>()
+                .resource_mut::<CommandPlanIdAllocator>()
                 .allocate(),
-            MissionId(0)
+            CommandPlanId(0)
         );
     }
 }

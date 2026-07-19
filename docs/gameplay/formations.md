@@ -14,7 +14,7 @@ turn their assigned pose into concrete HTN movement and hold orders.
 
 The initial shape is a wedge. It grows by adding successively wider rows behind
 the coordinator, so it has no hard-coded squad-size limit. Hold Line
-coordination uses the mission rally point as the wedge anchor and faces the
+coordination uses the plan rally point as the wedge anchor and faces the
 wedge back toward the held line. Unique fallback positions and their shared
 heading are bundled into the original subordinate task directives, allowing
 expiry fallback to work after communications are lost. On arrival, movement

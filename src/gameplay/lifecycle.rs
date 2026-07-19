@@ -17,7 +17,7 @@ impl Plugin for UnitLifecyclePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            warn_invalid_life_status.run_if(in_state(GameState::ScenarioScreen)),
+            warn_invalid_life_status.run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

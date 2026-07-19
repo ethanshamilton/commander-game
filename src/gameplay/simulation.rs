@@ -30,12 +30,12 @@ impl Plugin for SimulationPlugin {
                     SimulationSet::Cleanup,
                 )
                     .chain()
-                    .run_if(in_state(GameState::ScenarioScreen))
+                    .run_if(in_state(GameState::MissionScreen))
                     .run_if(simulation_running),
             )
             .add_systems(
                 Update,
-                toggle_simulation_pause.run_if(in_state(GameState::ScenarioScreen)),
+                toggle_simulation_pause.run_if(in_state(GameState::MissionScreen)),
             )
             .add_systems(
                 FixedUpdate,

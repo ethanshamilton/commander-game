@@ -1,4 +1,4 @@
-#![doc = include_str!("../../docs/screens/scenario.md")]
+#![doc = include_str!("../../docs/screens/mission.md")]
 
 use crate::actors::skills::Marksmanship;
 use crate::actors::units::*;
@@ -13,23 +13,21 @@ use crate::ai::perception::{
 };
 use crate::gameplay::combat::{CombatOrder, CombatState};
 use crate::gameplay::command::{CommandForest, UnitIdentity};
+use crate::gameplay::command_plans::CommandPlanIdAllocator;
+use crate::gameplay::command_plans::{CommandPlan, CommandPlanDelegationProgress};
 use crate::gameplay::comms::{CommsLinks, VoiceComms};
 use crate::gameplay::diagnostics::SimulationPerf;
 use crate::gameplay::map::BattlefieldMap;
-use crate::gameplay::missions::MissionIdAllocator;
-use crate::gameplay::missions::{MissionDelegationProgress, MissionPlan, TacticalMission};
-use crate::gameplay::objectives::{ScenarioObjectiveSet, ScenarioOutcome};
+use crate::gameplay::objectives::{MissionObjectiveSet, MissionOutcome};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::packets::{Inbox, Outbox, PacketIdAllocator, SeenPackets};
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
+use crate::missions::{MissionDefinition, SelectedMission};
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge, ReportCadence};
-use crate::player::mission_placement::{
-    MissionPlacementState, SelectedMission, expiry_duration_ticks,
-};
+use crate::player::plan_placement::{PlanPlacementState, SelectedPlan, expiry_duration_ticks};
 use crate::player::selection::{INFO_PANEL_WIDTH_PX, SelectedUnit};
-use crate::scenarios::{ScenarioDefinition, SelectedScenario};
 use crate::ui::active_action::{ActiveActionPanel, ActiveActionText};
 use crate::ui::widgets::{
     TextButtonConfig, ToggleConfig, spawn_checkbox_toggle, spawn_text_button,
@@ -48,10 +46,10 @@ use std::collections::HashMap;
 // ============================================================================
 
 #[derive(Component)]
-pub struct ScenarioScreenRoot;
+pub struct MissionScreenRoot;
 
 #[derive(Component)]
-pub struct ScenarioScoped;
+pub struct MissionScoped;
 
 #[derive(Component)]
 pub struct SelectedUnitInfoPanel;
@@ -126,7 +124,7 @@ struct SpawnSoldierAction {
 }
 
 #[derive(Component, Clone, Copy)]
-struct ScenarioMenuToggle {
+struct PlanMenuToggle {
     id: MenuId,
 }
 
@@ -134,39 +132,39 @@ struct ScenarioMenuToggle {
 struct BeginHoldLinePlacementAction;
 
 #[derive(Component)]
-pub struct MissionList;
+pub struct PlanList;
 
 #[derive(Component, Clone, Copy)]
-struct SelectMissionAction {
-    mission: Entity,
+struct SelectPlanAction {
+    plan: Entity,
 }
 
 #[derive(Component)]
-struct RenameSelectedMissionAction;
+struct RenameSelectedPlanAction;
 
 #[derive(Component)]
-struct MissionRenameInput;
+struct PlanRenameInput;
 
 #[derive(Component)]
-struct MissionExpiryInput;
+struct PlanExpiryInput;
 
 #[derive(Component)]
-pub struct MissionAssignmentStatus;
+pub struct CommandPlanAssignmentStatus;
 
 #[derive(Resource, Debug, Clone)]
-struct MissionAssignmentFeedback(String);
+struct CommandPlanAssignmentFeedback(String);
 
-impl Default for MissionAssignmentFeedback {
+impl Default for CommandPlanAssignmentFeedback {
     fn default() -> Self {
-        Self("Select a mission and squad leader to assign.".into())
+        Self("Select a plan and squad leader to assign.".into())
     }
 }
 
 #[derive(Component)]
-pub struct ScenarioOutcomeBanner;
+pub struct MissionOutcomeBanner;
 
 #[derive(Component)]
-pub struct ScenarioOutcomeText;
+pub struct MissionOutcomeText;
 
 // ============================================================================
 // MENU SYSTEM
@@ -183,7 +181,7 @@ impl MenuState {
         let mut states = HashMap::new();
         states.insert(MenuId::Meta, true);
         states.insert(MenuId::Unit, false);
-        states.insert(MenuId::Mission, false);
+        states.insert(MenuId::Plan, false);
         states.insert(MenuId::Settings, false);
 
         Self { states }
@@ -204,12 +202,12 @@ pub struct Menu {
     pub id: MenuId,
 }
 
-/// Possible menus within the scenario screen
+/// Possible menus within the mission screen
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MenuId {
     Meta,
     Unit,
-    Mission,
+    Plan,
     Settings,
 }
 
@@ -217,26 +215,26 @@ pub enum MenuId {
 // PLUGIN
 // ============================================================================
 
-pub struct ScenarioScreenPlugin;
+pub struct MissionScreenPlugin;
 
-impl Plugin for ScenarioScreenPlugin {
+impl Plugin for MissionScreenPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(MenuState::new())
             .init_resource::<UnitDebugPanelState>()
-            .init_resource::<MissionAssignmentFeedback>()
+            .init_resource::<CommandPlanAssignmentFeedback>()
             .add_systems(
-                OnEnter(crate::GameState::ScenarioScreen),
-                (setup_scenario_ui, setup_selected_scenario),
+                OnEnter(crate::GameState::MissionScreen),
+                (setup_mission_ui, setup_selected_mission),
             )
             .add_systems(
-                OnExit(crate::GameState::ScenarioScreen),
-                cleanup_scenario_scene,
+                OnExit(crate::GameState::MissionScreen),
+                cleanup_mission_scene,
             )
             .add_systems(
                 Update,
                 (
-                    update_menu_visibility.after(toggle_mission_menu),
-                    toggle_mission_menu,
+                    update_menu_visibility.after(toggle_plan_menu),
+                    toggle_plan_menu,
                     update_selected_unit_info_panel,
                     update_selected_unit_debug_chrome,
                     update_selected_unit_trace,
@@ -245,11 +243,11 @@ impl Plugin for ScenarioScreenPlugin {
                     update_render_perf_text,
                     update_simulation_perf_text,
                     update_simulation_perf_breakdown,
-                    update_scenario_outcome_banner,
+                    update_mission_outcome_banner,
                     update_mission_list,
                     update_mission_assignment_status,
                 )
-                    .run_if(in_state(crate::GameState::ScenarioScreen)),
+                    .run_if(in_state(crate::GameState::MissionScreen)),
             );
     }
 }
@@ -288,9 +286,9 @@ fn handle_unit_debug_section_toggle(
 fn begin_hold_line_placement(
     activate: On<Activate>,
     actions: Query<(), With<BeginHoldLinePlacementAction>>,
-    inputs: Query<&EditableText, With<MissionExpiryInput>>,
-    mut placement: ResMut<MissionPlacementState>,
-    mut feedback: ResMut<MissionAssignmentFeedback>,
+    inputs: Query<&EditableText, With<PlanExpiryInput>>,
+    mut placement: ResMut<PlanPlacementState>,
+    mut feedback: ResMut<CommandPlanAssignmentFeedback>,
 ) {
     if actions.get(activate.entity).is_err() {
         return;
@@ -313,15 +311,15 @@ fn begin_hold_line_placement(
 
 fn select_mission(
     activate: On<Activate>,
-    actions: Query<&SelectMissionAction>,
-    missions: Query<(), (With<TacticalMission>, With<MissionPlan>)>,
-    mut selected: ResMut<SelectedMission>,
+    actions: Query<&SelectPlanAction>,
+    plans: Query<(), With<CommandPlan>>,
+    mut selected: ResMut<SelectedPlan>,
 ) {
     let Ok(action) = actions.get(activate.entity) else {
         return;
     };
-    if missions.get(action.mission).is_ok() {
-        selected.entity = Some(action.mission);
+    if plans.get(action.plan).is_ok() {
+        selected.entity = Some(action.plan);
         selected.preview = true;
         selected.assignment_mode = true;
     }
@@ -329,10 +327,10 @@ fn select_mission(
 
 fn rename_selected_mission(
     activate: On<Activate>,
-    actions: Query<(), With<RenameSelectedMissionAction>>,
-    selected: Res<SelectedMission>,
-    inputs: Query<&EditableText, With<MissionRenameInput>>,
-    mut missions: Query<(&mut MissionPlan, &mut Name), With<TacticalMission>>,
+    actions: Query<(), With<RenameSelectedPlanAction>>,
+    selected: Res<SelectedPlan>,
+    inputs: Query<&EditableText, With<PlanRenameInput>>,
+    mut plans: Query<(&mut CommandPlan, &mut Name)>,
 ) {
     if actions.get(activate.entity).is_err() {
         return;
@@ -347,40 +345,40 @@ fn rename_selected_mission(
     if label.trim().is_empty() {
         return;
     }
-    let Ok((mut mission, mut name)) = missions.get_mut(entity) else {
+    let Ok((mut plan, mut name)) = plans.get_mut(entity) else {
         return;
     };
 
-    mission.label = label;
-    *name = Name::new(mission.label.clone());
+    plan.label = label;
+    *name = Name::new(plan.label.clone());
 }
 
-fn handle_scenario_menu_toggle_change(
+fn handle_plan_menu_toggle_change(
     value_change: On<ValueChange<bool>>,
     mut menu_state: ResMut<MenuState>,
-    toggles: Query<&ScenarioMenuToggle>,
+    toggles: Query<&PlanMenuToggle>,
 ) {
     if let Ok(toggle) = toggles.get(value_change.source) {
         menu_state.set(toggle.id, value_change.value);
     }
 }
 
-/// Toggles the mission menu and keeps its sidebar checkbox in sync.
-fn toggle_mission_menu(
+/// Toggles the plan menu and keeps its sidebar checkbox in sync.
+fn toggle_plan_menu(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut menu_state: ResMut<MenuState>,
-    toggles: Query<(Entity, &ScenarioMenuToggle, Has<Checked>)>,
+    toggles: Query<(Entity, &PlanMenuToggle, Has<Checked>)>,
 ) {
-    if !keyboard.just_pressed(KeyCode::KeyM) {
+    if !keyboard.just_pressed(KeyCode::KeyP) {
         return;
     }
 
-    let is_open = !menu_state.is_open(MenuId::Mission);
-    menu_state.set(MenuId::Mission, is_open);
+    let is_open = !menu_state.is_open(MenuId::Plan);
+    menu_state.set(MenuId::Plan, is_open);
 
     for (entity, toggle, is_checked) in &toggles {
-        if toggle.id != MenuId::Mission || is_checked == is_open {
+        if toggle.id != MenuId::Plan || is_checked == is_open {
             continue;
         }
 
@@ -411,15 +409,15 @@ pub fn update_menu_visibility(
 }
 
 fn update_mission_assignment_status(
-    feedback: Res<MissionAssignmentFeedback>,
-    selected: Res<SelectedMission>,
-    mut statuses: Query<&mut Text, With<MissionAssignmentStatus>>,
+    feedback: Res<CommandPlanAssignmentFeedback>,
+    selected: Res<SelectedPlan>,
+    mut statuses: Query<&mut Text, With<CommandPlanAssignmentStatus>>,
 ) {
     if !feedback.is_changed() && !selected.is_changed() {
         return;
     }
     let text = if selected.assignment_mode {
-        "Assign Mission Mode: select a squad leader."
+        "Assign Plan Mode: select a squad leader."
     } else {
         &feedback.0
     };
@@ -430,11 +428,11 @@ fn update_mission_assignment_status(
 
 fn update_mission_list(
     mut commands: Commands,
-    missions: Query<(Entity, Ref<MissionPlan>), With<TacticalMission>>,
-    selected: Res<SelectedMission>,
-    lists: Query<Entity, With<MissionList>>,
+    plans: Query<(Entity, Ref<CommandPlan>)>,
+    selected: Res<SelectedPlan>,
+    lists: Query<Entity, With<PlanList>>,
 ) {
-    if !selected.is_changed() && !missions.iter().any(|(_, mission)| mission.is_changed()) {
+    if !selected.is_changed() && !plans.iter().any(|(_, plan)| plan.is_changed()) {
         return;
     }
 
@@ -442,13 +440,13 @@ fn update_mission_list(
         return;
     };
 
-    let mut entries: Vec<_> = missions.iter().collect();
+    let mut entries: Vec<_> = plans.iter().collect();
     entries.sort_by_key(|(_, plan)| plan.id);
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|parent| {
         if entries.is_empty() {
             parent.spawn((
-                Text::new("No tactical missions"),
+                Text::new("No plans"),
                 TextFont {
                     font_size: FontSize::Px(15.0),
                     ..default()
@@ -472,10 +470,7 @@ fn update_mission_list(
                     text_size: 14.0,
                     ..default()
                 },
-                (
-                    SelectMissionAction { mission: entity },
-                    observe(select_mission),
-                ),
+                (SelectPlanAction { plan: entity }, observe(select_mission)),
             );
         }
     });
@@ -844,10 +839,10 @@ pub fn update_simulation_clock_text(
     **text = format!("T+{minutes:02}:{seconds:02}  tick {}{paused}", clock.tick);
 }
 
-pub fn update_scenario_outcome_banner(
-    outcome: Res<ScenarioOutcome>,
-    mut banner_query: Query<&mut Node, With<ScenarioOutcomeBanner>>,
-    mut text_query: Query<(&mut Text, &mut TextColor), With<ScenarioOutcomeText>>,
+pub fn update_mission_outcome_banner(
+    outcome: Res<MissionOutcome>,
+    mut banner_query: Query<&mut Node, With<MissionOutcomeBanner>>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<MissionOutcomeText>>,
 ) {
     if !outcome.is_changed() {
         return;
@@ -861,15 +856,15 @@ pub fn update_scenario_outcome_banner(
     };
 
     match *outcome {
-        ScenarioOutcome::InProgress => {
+        MissionOutcome::InProgress => {
             banner_node.display = Display::None;
         }
-        ScenarioOutcome::Victory => {
+        MissionOutcome::Victory => {
             banner_node.display = Display::Flex;
             **text = "VICTORY".to_string();
             *text_color = TextColor(Color::srgb(0.45, 1.0, 0.45));
         }
-        ScenarioOutcome::Defeat => {
+        MissionOutcome::Defeat => {
             banner_node.display = Display::Flex;
             **text = "DEFEAT".to_string();
             *text_color = TextColor(Color::srgb(1.0, 0.25, 0.2));
@@ -1009,12 +1004,12 @@ pub fn update_simulation_perf_breakdown(
     **text = lines;
 }
 
-/// Setup the entire scenario UI hierarchy using flexbox
-pub fn setup_scenario_ui(mut commands: Commands) {
+/// Setup the entire mission UI hierarchy using flexbox
+pub fn setup_mission_ui(mut commands: Commands) {
     commands
         .spawn((
-            ScenarioScreenRoot,
-            ScenarioOutcomeBanner,
+            MissionScreenRoot,
+            MissionOutcomeBanner,
             Node {
                 display: Display::None,
                 position_type: PositionType::Absolute,
@@ -1029,7 +1024,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                ScenarioOutcomeText,
+                MissionOutcomeText,
                 Text::new(""),
                 TextFont {
                     font_size: FontSize::Px(72.0),
@@ -1041,7 +1036,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
 
     commands
         .spawn((
-            ScenarioScreenRoot,
+            MissionScreenRoot,
             ActiveActionPanel,
             Node {
                 display: Display::None,
@@ -1074,7 +1069,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
 
     commands
         .spawn((
-            ScenarioScreenRoot,
+            MissionScreenRoot,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(10.0),
@@ -1149,7 +1144,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
     // Root flex container (fills screen, horizontal layout)
     commands
         .spawn((
-            ScenarioScreenRoot,
+            MissionScreenRoot,
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
@@ -1183,25 +1178,23 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                             ..default()
                         },
                         (
-                            ScenarioMenuToggle { id: MenuId::Unit },
-                            observe(handle_scenario_menu_toggle_change),
+                            PlanMenuToggle { id: MenuId::Unit },
+                            observe(handle_plan_menu_toggle_change),
                         ),
                     );
 
                     spawn_checkbox_toggle(
                         sidebar,
                         ToggleConfig {
-                            label: "M".to_string(),
+                            label: "P".to_string(),
                             checked: false,
                             width: Val::Px(180.0),
                             height: Val::Px(50.0),
                             ..default()
                         },
                         (
-                            ScenarioMenuToggle {
-                                id: MenuId::Mission,
-                            },
-                            observe(handle_scenario_menu_toggle_change),
+                            PlanMenuToggle { id: MenuId::Plan },
+                            observe(handle_plan_menu_toggle_change),
                         ),
                     );
 
@@ -1215,10 +1208,10 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                             ..default()
                         },
                         (
-                            ScenarioMenuToggle {
+                            PlanMenuToggle {
                                 id: MenuId::Settings,
                             },
-                            observe(handle_scenario_menu_toggle_change),
+                            observe(handle_plan_menu_toggle_change),
                         ),
                     );
                 });
@@ -1239,9 +1232,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
 
                     main_area
                         .spawn((
-                            Menu {
-                                id: MenuId::Mission,
-                            },
+                            Menu { id: MenuId::Plan },
                             Node {
                                 width: Val::Percent(100.0),
                                 min_height: Val::Px(100.0),
@@ -1253,8 +1244,8 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                             },
                             BackgroundColor(Color::srgb(0.12, 0.12, 0.08)),
                         ))
-                        .with_children(|mission_menu| {
-                            mission_menu.spawn((
+                        .with_children(|plan_menu| {
+                            plan_menu.spawn((
                                 Text::new("Expiry minutes (0 = none)"),
                                 TextFont {
                                     font_size: FontSize::Px(12.0),
@@ -1262,10 +1253,10 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                 },
                                 TextColor(Color::srgb(0.8, 0.8, 0.65)),
                             ));
-                            mission_menu.spawn((
+                            plan_menu.spawn((
                                 EditableText::new("5"),
                                 TextCursorStyle::default(),
-                                MissionExpiryInput,
+                                PlanExpiryInput,
                                 Node {
                                     width: Val::Px(180.0),
                                     height: Val::Px(30.0),
@@ -1276,7 +1267,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                 BorderColor::all(Color::srgb(0.55, 0.55, 0.45)),
                             ));
                             spawn_text_button(
-                                mission_menu,
+                                plan_menu,
                                 TextButtonConfig {
                                     label: "Hold Line".to_string(),
                                     width: Val::Px(180.0),
@@ -1289,19 +1280,19 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                     observe(begin_hold_line_placement),
                                 ),
                             );
-                            mission_menu.spawn((
-                                MissionAssignmentStatus,
-                                Text::new("Select a mission and squad leader to assign."),
+                            plan_menu.spawn((
+                                CommandPlanAssignmentStatus,
+                                Text::new("Select a plan and squad leader to assign."),
                                 TextFont {
                                     font_size: FontSize::Px(12.0),
                                     ..default()
                                 },
                                 TextColor(Color::srgb(0.8, 0.8, 0.65)),
                             ));
-                            mission_menu.spawn((
+                            plan_menu.spawn((
                                 EditableText::new(""),
                                 TextCursorStyle::default(),
-                                MissionRenameInput,
+                                PlanRenameInput,
                                 Node {
                                     width: Val::Px(180.0),
                                     height: Val::Px(30.0),
@@ -1312,7 +1303,7 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                 BorderColor::all(Color::srgb(0.55, 0.55, 0.45)),
                             ));
                             spawn_text_button(
-                                mission_menu,
+                                plan_menu,
                                 TextButtonConfig {
                                     label: "Apply name".to_string(),
                                     width: Val::Px(180.0),
@@ -1320,21 +1311,18 @@ pub fn setup_scenario_ui(mut commands: Commands) {
                                     text_size: 13.0,
                                     ..default()
                                 },
-                                (
-                                    RenameSelectedMissionAction,
-                                    observe(rename_selected_mission),
-                                ),
+                                (RenameSelectedPlanAction, observe(rename_selected_mission)),
                             );
-                            mission_menu.spawn((
-                                Text::new("Tactical missions"),
+                            plan_menu.spawn((
+                                Text::new("Plans"),
                                 TextFont {
                                     font_size: FontSize::Px(15.0),
                                     ..default()
                                 },
                                 TextColor(Color::srgb(0.85, 0.85, 0.75)),
                             ));
-                            mission_menu.spawn((
-                                MissionList,
+                            plan_menu.spawn((
+                                PlanList,
                                 Node {
                                     width: Val::Px(180.0),
                                     flex_direction: FlexDirection::Column,
@@ -1554,52 +1542,52 @@ pub fn setup_scenario_ui(mut commands: Commands) {
         });
 }
 
-/// Cleanup scenario scene on exit
-pub fn cleanup_scenario_scene(
+/// Cleanup mission scene on exit
+pub fn cleanup_mission_scene(
     mut commands: Commands,
-    ui_roots: Query<Entity, With<ScenarioScreenRoot>>,
-    scenario_entities: Query<Entity, With<ScenarioScoped>>,
-    mut mission_ids: ResMut<MissionIdAllocator>,
+    ui_roots: Query<Entity, With<MissionScreenRoot>>,
+    mission_entities: Query<Entity, With<MissionScoped>>,
+    mut mission_ids: ResMut<CommandPlanIdAllocator>,
 ) {
     for entity in &ui_roots {
         commands.entity(entity).despawn();
     }
 
-    for entity in &scenario_entities {
+    for entity in &mission_entities {
         commands.entity(entity).despawn();
     }
 
     mission_ids.reset();
 }
 
-pub fn setup_selected_scenario(mut commands: Commands, selected: Option<Res<SelectedScenario>>) {
+pub fn setup_selected_mission(mut commands: Commands, selected: Option<Res<SelectedMission>>) {
     let Some(selected) = selected else {
-        panic!("SCENARIO DOES NOT EXIST: ScenarioScreen entered without SelectedScenario");
+        panic!("MISSION DOES NOT EXIST: MissionScreen entered without SelectedMission");
     };
 
-    spawn_scenario(&mut commands, selected.scenario);
+    spawn_mission(&mut commands, selected.mission);
 }
 
-pub fn spawn_scenario(commands: &mut Commands, scenario: &ScenarioDefinition) {
+pub fn spawn_mission(commands: &mut Commands, mission: &MissionDefinition) {
     info!(
-        "Spawning scenario: {} ({}) on map: {}",
-        scenario.name, scenario.id, scenario.map.name
+        "Spawning mission: {} ({}) on map: {}",
+        mission.name, mission.id, mission.map.name
     );
-    commands.insert_resource(BattlefieldMap::from_definition(scenario.map));
+    commands.insert_resource(BattlefieldMap::from_definition(mission.map));
     commands.insert_resource(SimulationClock::default());
     commands.insert_resource(PlayerTacticalKnowledge::default());
     commands.insert_resource(PacketIdAllocator::default());
     commands.insert_resource(SelectedUnit::default());
-    commands.insert_resource(ScenarioObjectiveSet::from_slices(
-        scenario.victory_conditions,
-        scenario.defeat_conditions,
+    commands.insert_resource(MissionObjectiveSet::from_slices(
+        mission.victory_conditions,
+        mission.defeat_conditions,
     ));
-    commands.insert_resource(ScenarioOutcome::InProgress);
+    commands.insert_resource(MissionOutcome::InProgress);
 
     let mut entities_by_unit_id = HashMap::new();
     let mut side_by_entity = HashMap::new();
 
-    for unit in scenario.units {
+    for unit in mission.units {
         let entity = spawn_soldier_at(
             commands,
             unit.rank,
@@ -1619,7 +1607,7 @@ pub fn spawn_scenario(commands: &mut Commands, scenario: &ScenarioDefinition) {
     }
 
     commands.insert_resource(CommandForest::from_assignments(
-        scenario.command_assignments,
+        mission.command_assignments,
         &entities_by_unit_id,
         |entity| side_by_entity.get(&entity).copied(),
     ));
@@ -1655,7 +1643,7 @@ pub fn spawn_soldier_at(
 ) -> Entity {
     let entity = commands
         .spawn((
-            ScenarioScoped,
+            MissionScoped,
             Soldier { rank, role },
             Alive,
             Allegiance { side },
@@ -1695,7 +1683,7 @@ pub fn spawn_soldier_at(
         .insert((
             DecisionTrace::default(),
             PlannerBelief::default(),
-            MissionDelegationProgress::default(),
+            CommandPlanDelegationProgress::default(),
             DomainRef(DomainId::Soldier),
         ))
         .id();

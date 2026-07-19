@@ -20,7 +20,7 @@ impl Plugin for MapRenderingPlugin {
             )
                 .chain()
                 .in_set(RenderingSet::Map)
-                .run_if(in_state(GameState::ScenarioScreen)),
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

@@ -69,7 +69,7 @@ impl Plugin for GameplayDiagnosticsPlugin {
                         .before(SimulationSet::Cleanup),
                     end_simulation_tick.after(SimulationSet::Cleanup),
                 )
-                    .run_if(in_state(GameState::ScenarioScreen))
+                    .run_if(in_state(GameState::MissionScreen))
                     .run_if(simulation_running),
             );
     }

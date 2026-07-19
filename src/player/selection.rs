@@ -4,8 +4,8 @@ use crate::GameState;
 use crate::actors::units::Alive;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
+use crate::gameplay::command_plans::CommandPlanAssignmentRequested;
 use crate::gameplay::measurements::{meters, to_meters};
-use crate::gameplay::missions::MissionAssignmentRequested;
 use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
 use crate::gameplay::packets::{
     Address, OrderCommand, Outbox, PacketIdAllocator, PacketPayload, SeenPackets,
@@ -14,7 +14,7 @@ use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::PositionTarget;
 use crate::player::control::PlayerControl;
 use crate::player::knowledge::{PlayerControlledUnit, PlayerTacticalKnowledge};
-use crate::player::mission_placement::{MissionPlacementState, PlayerInputSet, SelectedMission};
+use crate::player::plan_placement::{PlanPlacementState, PlayerInputSet, SelectedPlan};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -31,7 +31,7 @@ impl Plugin for SelectionPlugin {
             Update,
             (select_unit, issue_contextual_order)
                 .in_set(PlayerInputSet::Selection)
-                .run_if(in_state(GameState::ScenarioScreen)),
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }
@@ -46,11 +46,11 @@ fn select_unit(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     knowledge: Res<PlayerTacticalKnowledge>,
-    placement: Res<MissionPlacementState>,
+    placement: Res<PlanPlacementState>,
     mut selected: ResMut<SelectedUnit>,
-    mut selected_mission: ResMut<SelectedMission>,
+    mut selected_mission: ResMut<SelectedPlan>,
     controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
-    mut assignments: MessageWriter<MissionAssignmentRequested>,
+    mut assignments: MessageWriter<CommandPlanAssignmentRequested>,
 ) {
     if !mouse_buttons.just_pressed(MouseButton::Left) || placement.is_active() {
         return;
@@ -94,14 +94,14 @@ fn select_unit(
         .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(entity, _)| entity);
 
-    // An actual unit selection exits visual preview. When the mission menu put
+    // An actual unit selection exits visual preview. When the plan menu put
     // us in assignment mode, that same click is the assignment target.
     if let Some(assignee) = clicked_unit {
         selected_mission.preview = false;
         if selected_mission.assignment_mode {
-            if let (Some(mission), Ok(issuer)) = (selected_mission.entity, controlled.single()) {
-                assignments.write(MissionAssignmentRequested {
-                    mission,
+            if let (Some(plan), Ok(issuer)) = (selected_mission.entity, controlled.single()) {
+                assignments.write(CommandPlanAssignmentRequested {
+                    plan,
                     issuer,
                     assignee,
                 });
@@ -118,7 +118,7 @@ fn issue_contextual_order(
     windows: Query<&Window, With<PrimaryWindow>>,
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     selected: Res<SelectedUnit>,
-    placement: Res<MissionPlacementState>,
+    placement: Res<PlanPlacementState>,
     control: Res<PlayerControl>,
     clock: Res<SimulationClock>,
     knowledge: Res<PlayerTacticalKnowledge>,

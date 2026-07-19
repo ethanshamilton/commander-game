@@ -21,7 +21,7 @@ impl Plugin for SpatialIndexPlugin {
             FixedUpdate,
             rebuild_battlefield_spatial_grid
                 .in_set(SimulationSet::SpatialIndex)
-                .run_if(in_state(GameState::ScenarioScreen))
+                .run_if(in_state(GameState::MissionScreen))
                 .run_if(simulation_running),
         );
     }
