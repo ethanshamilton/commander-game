@@ -11,6 +11,7 @@ pub mod formations;
 pub mod lifecycle;
 pub mod map;
 pub mod measurements;
+pub mod mission_runtime;
 pub mod objectives;
 pub mod orders;
 pub mod packets;

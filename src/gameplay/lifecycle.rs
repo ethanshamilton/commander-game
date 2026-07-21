@@ -11,6 +11,10 @@ use crate::gameplay::simulation::MovementOrder;
 use crate::player::knowledge::ReportCadence;
 use bevy::prelude::*;
 
+/// Marks entities whose lifetime is scoped to the active mission.
+#[derive(Component)]
+pub struct MissionScoped;
+
 pub struct UnitLifecyclePlugin;
 
 impl Plugin for UnitLifecyclePlugin {

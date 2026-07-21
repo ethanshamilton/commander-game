@@ -4,8 +4,9 @@ use crate::GameState;
 use crate::gameplay::command_plans::{
     CommandPlan, CommandPlanArea, CommandPlanAssignees, CommandPlanIdAllocator, CommandPlanKind,
 };
+use crate::gameplay::lifecycle::MissionScoped;
 use crate::gameplay::simulation::{SIMULATION_TICK_HZ, SimulationClock};
-use crate::screens::mission::MissionScoped;
+use crate::input::{ActionState, GameAction};
 use crate::ui::active_action::ActiveAction;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -147,11 +148,11 @@ pub enum PlayerInputSet {
 }
 
 fn cancel_plan_placement(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    actions: Res<ActionState>,
     mut placement: ResMut<PlanPlacementState>,
     mut selected: ResMut<SelectedPlan>,
 ) {
-    if keyboard.just_pressed(KeyCode::Escape) {
+    if actions.just_pressed(GameAction::Cancel) {
         placement.cancel();
         selected.assignment_mode = false;
         selected.preview = false;

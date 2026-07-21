@@ -4,6 +4,7 @@
 mod actors;
 mod ai;
 mod gameplay;
+mod input;
 mod intel;
 mod maps;
 mod missions;
@@ -16,6 +17,7 @@ use bevy::gilrs::GilrsPlugin;
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, WindowMode, WindowPlugin};
 use gameplay::GameplayPlugins;
+use input::InputActionsPlugin;
 use player::PlayerPlugins;
 use screens::ScreensPlugins;
 use ui::UiPlugin;
@@ -33,6 +35,7 @@ fn main() {
                 })
                 .disable::<GilrsPlugin>(),
         )
+        .add_plugins(InputActionsPlugin)
         .add_plugins(GameplayPlugins)
         .add_plugins(AiPlugins)
         .add_plugins(PlayerPlugins)

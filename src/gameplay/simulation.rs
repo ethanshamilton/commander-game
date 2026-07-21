@@ -4,6 +4,7 @@ use crate::GameState;
 use crate::actors::units::{Alive, Mobility, Soldier};
 use crate::gameplay::orders::MovementOrderSource;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
+use crate::input::{ActionState, GameAction};
 use bevy::prelude::*;
 
 pub const SIMULATION_TICK_HZ: f64 = 20.0;
@@ -94,11 +95,8 @@ pub fn simulation_running(clock: Res<SimulationClock>) -> bool {
     !clock.paused
 }
 
-fn toggle_simulation_pause(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut clock: ResMut<SimulationClock>,
-) {
-    if keyboard.just_pressed(KeyCode::Space) {
+fn toggle_simulation_pause(actions: Res<ActionState>, mut clock: ResMut<SimulationClock>) {
+    if actions.just_pressed(GameAction::TogglePause) {
         clock.paused = !clock.paused;
     }
 }

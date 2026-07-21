@@ -1,6 +1,7 @@
 use crate::GameState;
 use crate::actors::units::{Health, Soldier};
 use crate::gameplay::lifecycle::kill_unit;
+use crate::input::{ActionState, GameAction};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
 
@@ -16,12 +17,12 @@ impl Plugin for DebugPowersPlugin {
 }
 
 fn debug_kill_selected_unit(
-    keyboard: Res<ButtonInput<KeyCode>>,
+    actions: Res<ActionState>,
     selected: Res<SelectedUnit>,
     mut commands: Commands,
     mut health: Query<&mut Health, With<Soldier>>,
 ) {
-    if !keyboard.just_pressed(KeyCode::KeyK) {
+    if !actions.just_pressed(GameAction::DebugKillSelected) {
         return;
     }
 

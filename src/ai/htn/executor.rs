@@ -655,7 +655,7 @@ mod tests {
     }
 
     /// Regression test: real soldiers spawn with `CombatOrder::HoldFire` as their
-    /// default posture (see `spawn_soldier_at`), tagged `CombatOrderSource::doctrine()`.
+    /// default posture (see `actors::spawning::spawn_soldier`), tagged `CombatOrderSource::doctrine()`.
     /// That default must not read as an "external order" that suppresses autonomous
     /// planning, or every autonomous unit is permanently inert.
     #[test]
