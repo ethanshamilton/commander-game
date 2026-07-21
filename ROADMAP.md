@@ -5,7 +5,6 @@
 - COMMAND: Command succession and dynamic redelegation.
 - MISSIONS: Multi-squad command tutorial mission.
   - This will be used to implement and test command succession.
-- CODE: Split up `src/screens/missions.rs` as it is becoming a god module.
 
 ## Next
 - MAP: Terrain types, i.e. water, road
