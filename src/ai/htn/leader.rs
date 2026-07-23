@@ -244,8 +244,9 @@ fn mark_next_station_delegated_in_simulation(state: &mut PlannerState) {
 }
 
 /// Deterministically assign every living formation participant, including the
-/// current plan coordinator, to one evenly spaced line station. Coordinator
-/// is a transient command relationship, not a special unit archetype.
+/// current plan coordinator, to one evenly spaced line station. Participants
+/// retain the caller's organizational order. Coordinator is a transient command
+/// relationship, not a special unit archetype.
 pub fn decompose_hold_line(
     from_m: Vec2,
     to_m: Vec2,
@@ -253,10 +254,12 @@ pub fn decompose_hold_line(
     coordinator: Entity,
     other_participants: &[Entity],
 ) -> Vec<HoldStationAssignment> {
-    let mut others = other_participants.to_vec();
-    others.sort_by_key(|entity| entity.index());
-    others.dedup();
-    others.retain(|entity| *entity != coordinator);
+    let mut others = Vec::with_capacity(other_participants.len());
+    for &participant in other_participants {
+        if participant != coordinator && !others.contains(&participant) {
+            others.push(participant);
+        }
+    }
 
     let participant_count = others.len() + 1;
     let formation_heading = fallback_facing(from_m, to_m, rally_point_m);
@@ -338,7 +341,7 @@ mod tests {
 
         assert_eq!(
             assignments.iter().map(|a| a.assignee).collect::<Vec<_>>(),
-            vec![a, coordinator, b, c]
+            vec![c, coordinator, a, b]
         );
         for pair in assignments.windows(2) {
             assert!(

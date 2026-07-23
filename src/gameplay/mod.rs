@@ -19,6 +19,7 @@ pub mod rendering;
 pub mod simulation;
 pub mod spatial;
 pub mod spatial_index;
+pub mod squads;
 pub mod terrain;
 
 use audio::GameplayAudioPlugin;

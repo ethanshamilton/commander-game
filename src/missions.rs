@@ -3,6 +3,7 @@
 use crate::actors::units::{Rank, Role, Side};
 use crate::gameplay::command::{CommandAssignmentDefinition, UnitId};
 use crate::gameplay::objectives::MissionCondition;
+use crate::gameplay::squads::{SquadDefinition, SquadId};
 use crate::maps::{DEMO_MAP, MapDefinition};
 use bevy::prelude::Resource;
 
@@ -12,6 +13,7 @@ pub struct MissionDefinition {
     pub briefing: &'static str,
     pub map: &'static MapDefinition,
     pub units: &'static [MissionUnit],
+    pub squads: &'static [SquadDefinition],
     pub command_assignments: &'static [CommandAssignmentDefinition],
     pub victory_conditions: &'static [MissionCondition],
     pub defeat_conditions: &'static [MissionCondition],
@@ -104,40 +106,29 @@ pub const SINGLE_SQUAD_COMMAND_TUTORIAL_SCENARIO: MissionDefinition = MissionDef
             heading_radians: std::f32::consts::PI,
         },
     ],
-    command_assignments: &[
-        CommandAssignmentDefinition {
-            subordinate: UnitId("blue_sergeant"),
-            superior: None,
+    squads: &[
+        SquadDefinition {
+            id: SquadId("blue_squad"),
+            label: "Blue Squad",
+            members: &[
+                UnitId("blue_sergeant"),
+                UnitId("blue_rifleman_1"),
+                UnitId("blue_rifleman_2"),
+                UnitId("blue_rifleman_3"),
+            ],
         },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("blue_rifleman_1"),
-            superior: Some(UnitId("blue_sergeant")),
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("blue_rifleman_2"),
-            superior: Some(UnitId("blue_sergeant")),
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("blue_rifleman_3"),
-            superior: Some(UnitId("blue_sergeant")),
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("red_sergeant"),
-            superior: None,
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("red_rifleman_1"),
-            superior: Some(UnitId("red_sergeant")),
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("red_rifleman_2"),
-            superior: Some(UnitId("red_sergeant")),
-        },
-        CommandAssignmentDefinition {
-            subordinate: UnitId("red_rifleman_3"),
-            superior: Some(UnitId("red_sergeant")),
+        SquadDefinition {
+            id: SquadId("red_squad"),
+            label: "Red Squad",
+            members: &[
+                UnitId("red_sergeant"),
+                UnitId("red_rifleman_1"),
+                UnitId("red_rifleman_2"),
+                UnitId("red_rifleman_3"),
+            ],
         },
     ],
+    command_assignments: &[],
     victory_conditions: &[MissionCondition::AllHostilesEliminated],
     defeat_conditions: &[MissionCondition::AllFriendliesEliminated],
 };

@@ -68,23 +68,17 @@ Likely pieces:
 
 Keep tree projection as a pure function and test roots, deep trees, orphans, stale/dead knowledge, and control transfer. Large-tree virtualization can wait until profiling shows it is needed.
 
-## 4. COMMAND: Squad organization abstraction
+## 4. COMMAND: Richer squad organization
 
-Introduce squads as persistent organizational entities above the individual command forest. The forest answers **who commands whom**; a squad answers **who belongs to the same organizational unit**, what role each member fills, and which shared formation/task context applies.
+The minimal succession prerequisite now belongs to NOW: a mission-scoped `Squad` contains an ordered roster, current leader, and revision, while each soldier has a `MemberOfSquad` reverse link. Roster order defines succession and formation ordering; `CommandForest` still records current individual authority.
 
-Possible components:
+The remaining NEXT work is richer organization:
 
-```rust
-#[derive(Component)] struct Squad { id: SquadId, side: Side, label: String }
-#[derive(Component)] struct SquadRoster { members: Vec<SquadMember> }
-struct SquadMember { unit: Entity, role: SquadRole, succession_priority: u16 }
-#[derive(Component)] struct MemberOfSquad(Entity);
-#[derive(Component)] struct SquadLeader(Entity);
-```
-
-Mission data should refer to stable `SquadId`/`UnitId`; runtime instantiation resolves entities. Validate that members belong to one squad, leader is in the roster, sides match, and command links agree with the initial squad leader.
-
-Plan assignment should target a squad entity while transmission still targets its current living leader. This lets succession change the leader without changing the plan's organizational assignee. Formation decomposition reads the squad roster filtered through local/living knowledge rather than treating every direct subordinate as automatically part of the squad.
+- plan assignment targets the stable squad entity while transmission resolves its current living leader;
+- explicit membership-transfer and reinforcement APIs increment the squad revision;
+- tactical roles, fireteams, staff billets, and nested organizational elements;
+- UI projections and player-knowledge rules for squad state;
+- data-driven squad definitions once mission assets leave source code.
 
 Do not create a magical shared “squad brain.” Individual soldiers retain beliefs and receive packets. The squad entity is organizational truth and stable identity, not collective cognition.
 
@@ -222,7 +216,7 @@ A plausible order that minimizes rework:
 1. Tuning resource and dev-profile measurements.
 2. Data-driven map/mission schemas.
 3. Terrain types, then structures and spatial queries.
-4. Squad organization, then command tree UI.
+4. Richer squad organization and command tree UI, building on the minimal NOW roster.
 5. Stances, once cover/occlusion semantics exist.
 6. Search pattern, using stance and assigned squad sectors where available.
 7. Inspector spike at any point as a dev-only experiment, ideally after tuning/squad data offer useful inspection targets.

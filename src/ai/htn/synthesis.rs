@@ -13,6 +13,7 @@ use crate::gameplay::command_plans::{
 };
 use crate::gameplay::simulation::{MovementOrder, SimulationClock};
 use crate::gameplay::spatial::{BattlefieldPosition, Heading, PositionTarget};
+use crate::gameplay::squads::{MemberOfSquad, Squad};
 use crate::intel::ReportedLifeStatus;
 use bevy::prelude::*;
 use std::cmp::Ordering;
@@ -38,6 +39,8 @@ pub fn synthesize_beliefs(
     recent_shots: Res<RecentResolvedShots>,
     command_forest: Option<Res<CommandForest>>,
     living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    memberships: Query<&MemberOfSquad>,
+    squads: Query<&Squad>,
     mut units: Query<
         (
             Entity,
@@ -85,12 +88,17 @@ pub fn synthesize_beliefs(
         );
         project_task_belief(&mut state, assigned_task);
         if let Some(command_forest) = command_forest.as_deref() {
+            let squad = memberships
+                .get(entity)
+                .ok()
+                .and_then(|membership| squads.get(membership.squad).ok());
             project_plan_belief(
                 &mut state,
                 entity,
                 assigned_plan,
                 delegation_progress,
                 command_forest,
+                squad,
                 &living_soldiers,
             );
         }
@@ -153,6 +161,7 @@ fn project_plan_belief(
     assigned: Option<&AssignedCommandPlan>,
     progress: Option<&CommandPlanDelegationProgress>,
     command_forest: &CommandForest,
+    squad: Option<&Squad>,
     living_soldiers: &Query<(), (With<Soldier>, With<Alive>)>,
 ) {
     let Some(assigned) = assigned else {
@@ -177,12 +186,22 @@ fn project_plan_belief(
         return;
     };
 
-    let subordinates: Vec<_> = command_forest
-        .subordinates_of(entity)
-        .iter()
-        .copied()
-        .filter(|subordinate| living_soldiers.get(*subordinate).is_ok())
-        .collect();
+    let subordinates: Vec<_> =
+        if let Some(squad) = squad.filter(|squad| squad.current_leader == Some(entity)) {
+            squad
+                .members
+                .iter()
+                .copied()
+                .filter(|member| *member != entity && living_soldiers.get(*member).is_ok())
+                .collect()
+        } else {
+            command_forest
+                .subordinates_of(entity)
+                .iter()
+                .copied()
+                .filter(|subordinate| living_soldiers.get(*subordinate).is_ok())
+                .collect()
+        };
     let assignments = decompose_hold_line(from_m, to_m, plan.rally_point_m, entity, &subordinates);
     let delegated = progress
         .filter(|progress| progress.plan == Some(plan.identity()))

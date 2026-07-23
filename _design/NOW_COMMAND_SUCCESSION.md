@@ -35,29 +35,21 @@ Later causes such as incapacitation, surrender, dismissal, and communications is
 
 ### Eligible successor
 
-For a dead commander, candidates are its **living direct subordinates**. A candidate must:
+Succession is defined by the commander's persistent squad roster, not inferred from every direct subordinate in `CommandForest`. The authored roster is ordered:
 
-- have `Soldier + Alive`;
-- have the same `Side` as the dead commander;
-- still be a direct child in the pre-transition forest.
-
-Choose by:
-
-1. authored succession priority (lower number wins);
-2. higher military rank;
-3. stable `UnitId` lexical order;
-4. Bevy entity bits only as a final fallback for malformed runtime-spawned units.
-
-Add a mission-authored succession value to `MissionUnit` and a runtime component:
-
-```rust
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SuccessionPriority(pub u16);
+```text
+[current leader, first successor, second successor, ...]
 ```
 
-Do not infer the whole policy from rank. Two privates need a stable doctrinal order, and entity creation order is not a good game rule.
+Promotion changes `Squad.current_leader`; it never reorders the roster. Starting after the deceased leader's roster position, choose the first member that:
 
-Add total rank ordering (`Rank::command_precedence`) rather than relying on enum declaration order.
+- has `Soldier + Alive`;
+- has the same `Side` as the squad;
+- is still a direct child of the deceased leader in the pre-transition forest.
+
+The direct-child requirement is a V1 consistency check: every living nonleader squad member is initially a direct subordinate of its leader. External direct subordinates, such as other squad leaders, are never succession candidates unless they also belong to the deceased commander's squad.
+
+Roster position is the complete deterministic policy. Do not add a parallel `SuccessionPriority`, rank tiebreaker, or entity-order rule.
 
 ### Tree rewrite
 
@@ -95,9 +87,9 @@ pub struct AssumedCommand {
 
 The succession system is allowed to install this directly because assumption of an existing lawful mission is doctrine, not a new remote order. It must not create a concrete movement/combat order.
 
-Do **not** copy the predecessor's delegation progress. The successor recomputes against its new direct members.
+Do **not** copy the predecessor's delegation progress. The successor recomputes against the squad's living roster.
 
-Existing subordinate `AssignedTask`s remain valid until superseded, cancelled, or expired. On the next planning pass, the successor emits revised tasks to all affected living direct members. Newer assignment stamps supersede the predecessor's tasks.
+Existing subordinate `AssignedTask`s remain valid until superseded, cancelled, or expired. On the next planning pass, the successor emits revised tasks to affected living squad members in roster order. Newer assignment stamps supersede the predecessor's tasks.
 
 ### Player command node
 
@@ -150,44 +142,21 @@ Packet consumers and assignment request handlers use the life-aware form.
 
 Succession is one cause of a broader rule: a plan coordinator must revise delegation whenever its effective command membership changes.
 
-### Change message
+### Squad revision invalidation
 
-Emit after a successful atomic rewrite:
+Keep invalidation explicit and small. `Squad.revision` increments whenever membership availability or leadership changes. Delegation progress records the squad revision it was computed against; a mismatch clears delegated recipients and recomputes against the living roster.
 
-```rust
-#[derive(Message)]
-pub struct CommandStructureChanged {
-    pub tick: u64,
-    pub reason: CommandStructureChangeReason,
-    pub affected_roots: Vec<Entity>,
-}
-```
+For the first death/succession slice, the lifecycle system may directly clear affected `CommandPlanDelegationProgress`. Add revision comparison when squad mutation expands beyond death. Do not add a participant-vector signature or several overlapping squad-change events preemptively.
 
-The plan system consumes it and invalidates execution progress for affected coordinators. Avoid polling or hashing the entire forest every tick.
+After recomputation:
 
-### Delegation signature
+1. clear the set of accepted subordinate assignments;
+2. recompute all stations/routes in roster order;
+3. send revised tasks to every living member whose directive changed;
+4. explicitly cancel obsolete tasks where the recipient is still alive; and
+5. update the coordinator's own target.
 
-Store the exact inputs that determine decomposition:
-
-```rust
-pub struct DelegationSignature {
-    pub plan_id: CommandPlanId,
-    pub assignment_revision: u64,
-    pub coordinator: Entity,
-    pub participants: Vec<UnitId>,
-}
-```
-
-Participants are sorted and contain only living direct members plus the coordinator. If the signature changes:
-
-1. increment the local delegation revision;
-2. clear the set of accepted subordinate assignments;
-3. recompute all stations/routes;
-4. send revised tasks to **every** living participant whose directive changed;
-5. explicitly cancel obsolete tasks where the recipient is still alive; and
-6. update the coordinator's own target.
-
-This fixes more than leader death: subordinate casualties, reinforcement, reparenting, and reassignment all use the same path.
+A single `CommandSucceeded` message carries historical old/new leadership data for UI and traces. Current squad truth remains persistent in the `Squad` component; ordinary consumers use that state rather than reconstructing it from events.
 
 ### In-flight packets
 
@@ -208,8 +177,8 @@ Create `src/gameplay/command_succession.rs` and `CommandSuccessionPlugin`.
 Per `UnitDied`:
 
 1. Snapshot dead unit's side, parent, direct children, assigned plan, and control marker.
-2. Filter eligible candidates using `Alive`, side, priority, rank, and `UnitIdentity`.
-3. Choose deterministically with a pure `choose_successor` function.
+2. Resolve the dead unit's `MemberOfSquad` and read candidates from the ordered roster.
+3. Choose the first eligible member after the deceased leader with a pure helper.
 4. Call one atomic `CommandForest::succeed` mutation.
 5. Remove command-only components from the deceased (`AssignedCommandPlan`, pending delegation, progress, assumed-command marker).
 6. If a successor exists:
@@ -217,7 +186,7 @@ Per `UnitDied`:
    - reset/generate delegation progress;
    - add `AssumedCommand`;
    - transfer `PlayerControlledUnit` if needed.
-7. Emit `CommandSucceeded` and `CommandStructureChanged` messages.
+7. Increment the squad revision and emit `CommandSucceeded`.
 8. Add a decision/command trace record to the successor.
 9. Let deferred ECS commands flush before the next simulation tick.
 
@@ -245,12 +214,14 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 - Return early if already dead/not alive.
 - Add lifecycle tests proving one event and capability stripping.
 
-### C2 — Deterministic policy data
+### C2 — Minimal squad organization
 
-- Add `SuccessionPriority` to mission authoring and soldier spawn data.
-- Add explicit rank precedence.
-- Validate duplicate/missing succession priorities among siblings at mission instantiation; duplicates may fall back deterministically but should warn.
-- Implement and unit-test pure candidate ordering.
+- Add ordered `SquadDefinition`s to mission authoring.
+- Spawn persistent `Squad` entities and install `MemberOfSquad` reverse links.
+- Derive initial squad-internal forest links from each roster.
+- Validate unique/nonempty squads, unique membership, known units, and same-side rosters.
+- Make formation decomposition preserve authored roster order.
+- Implement and unit-test ordered successor selection.
 
 ### C3 — Atomic forest succession
 
@@ -276,7 +247,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 
 ### C6 — Dynamic redelegation
 
-- Replace `delegated_to`-only invalidation with a delegation signature/revision.
+- Replace `delegated_to`-only invalidation with squad revision-aware progress.
 - Recompute and resend changed directives after any command-membership change.
 - Add cancellation for obsolete live recipients.
 - Verify concrete orders remain HTN-sourced.
@@ -305,7 +276,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 2. **Root death:** `D -> [S,A]` becomes root `S -> [A]`.
 3. **Leaf death:** leaf disappears from parent, no promotion.
 4. **No eligible candidate:** children become roots and no invalid references remain.
-5. **Priority:** authored priority beats rank; rank beats stable ID when priority ties.
+5. **Roster order:** the first eligible member after the deceased leader wins, independent of rank and entity allocation.
 6. **Cross-side/missing components:** candidate rejected without corrupting forest.
 7. **Simultaneous casualties:** leader and first successor die; next living candidate assumes command.
 8. **Plan inheritance:** successor gets same plan/expiry, fresh progress, and no direct concrete order.
@@ -330,5 +301,5 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 - Delayed/contested knowledge of a commander's death.
 - Elections, competing claimants, morale, refusal, and rank disputes.
 - Temporary command loss caused only by comms isolation.
-- Full squad/formation entities and staff roles.
+- Squad roles, fireteams, staff billets, and nested organizational entities.
 - Reinforcement spawning and campaign-level replacement officers.
