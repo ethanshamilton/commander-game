@@ -1,6 +1,7 @@
 use crate::GameState;
-use crate::actors::units::{Health, Soldier};
-use crate::gameplay::lifecycle::kill_unit;
+use crate::actors::units::{Alive, Health, Soldier};
+use crate::gameplay::lifecycle::{UnitDeathCause, kill_unit};
+use crate::gameplay::simulation::SimulationClock;
 use crate::input::{ActionState, GameAction};
 use crate::player::selection::SelectedUnit;
 use bevy::prelude::*;
@@ -20,7 +21,8 @@ fn debug_kill_selected_unit(
     actions: Res<ActionState>,
     selected: Res<SelectedUnit>,
     mut commands: Commands,
-    mut health: Query<&mut Health, With<Soldier>>,
+    clock: Res<SimulationClock>,
+    mut health: Query<&mut Health, (With<Soldier>, With<Alive>)>,
 ) {
     if !actions.just_pressed(GameAction::DebugKillSelected) {
         return;
@@ -30,10 +32,11 @@ fn debug_kill_selected_unit(
         return;
     };
 
-    if let Ok(mut health) = health.get_mut(entity) {
-        health.current = 0;
-    }
+    let Ok(mut health) = health.get_mut(entity) else {
+        return;
+    };
+    health.current = 0;
 
-    kill_unit(&mut commands, entity);
+    kill_unit(&mut commands, entity, clock.tick, UnitDeathCause::Debug);
     info!("Debug killed selected unit: {entity:?}");
 }

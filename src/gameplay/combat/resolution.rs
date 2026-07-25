@@ -5,7 +5,7 @@ use crate::actors::skills::Marksmanship;
 use crate::actors::units::{Alive, Allegiance, Health, Inventory, Soldier};
 use crate::actors::weapons::Weapon;
 use crate::ai::perception::{ContactKind, ContactType, PerceptionMemory};
-use crate::gameplay::lifecycle::kill_unit;
+use crate::gameplay::lifecycle::{UnitDeathCause, kill_unit};
 use crate::gameplay::orders::CombatOrderSource;
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::BattlefieldPosition;
@@ -169,7 +169,12 @@ pub fn resolve_combat(
         if hit {
             target_health.current = (target_health.current - weapon.damage).max(0);
             if target_health.current == 0 {
-                kill_unit(&mut commands, target);
+                kill_unit(
+                    &mut commands,
+                    target,
+                    clock.tick,
+                    UnitDeathCause::Combat { attacker: shooter },
+                );
             }
         }
 
