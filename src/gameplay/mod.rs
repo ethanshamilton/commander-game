@@ -4,6 +4,7 @@ pub mod audio;
 pub mod combat;
 pub mod command;
 pub mod command_plans;
+pub mod command_succession;
 pub mod comms;
 pub mod debug_powers;
 pub mod diagnostics;

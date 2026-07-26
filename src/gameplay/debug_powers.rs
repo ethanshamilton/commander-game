@@ -8,11 +8,19 @@ use bevy::prelude::*;
 
 pub struct DebugPowersPlugin;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DebugPowersSet {
+    DeathCommands,
+}
+
 impl Plugin for DebugPowersPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            debug_kill_selected_unit.run_if(in_state(GameState::MissionScreen)),
+            (debug_kill_selected_unit, ApplyDeferred)
+                .chain()
+                .in_set(DebugPowersSet::DeathCommands)
+                .run_if(in_state(GameState::MissionScreen)),
         );
     }
 }

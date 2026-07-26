@@ -4,6 +4,7 @@ use crate::GameState;
 use crate::actors::units::{Alive, Allegiance, Side, Soldier};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::player::control::PlayerControl;
+use crate::player::knowledge::PlayerControlledUnit;
 use bevy::prelude::*;
 
 pub struct ObjectivesPlugin;
@@ -102,23 +103,45 @@ fn evaluate_mission_outcome(
     mut clock: ResMut<SimulationClock>,
     control: Res<PlayerControl>,
     units: Query<(&Allegiance, Option<&Alive>), With<Soldier>>,
+    dead_player_unit: Query<(), (With<PlayerControlledUnit>, Without<Alive>)>,
     mut mission_ended: MessageWriter<MissionEnded>,
 ) {
     if outcome.is_finished() {
         return;
     }
 
+    // Player-command death has precedence over ordinary conditions, including
+    // simultaneous elimination of the final hostile unit.
+    if !dead_player_unit.is_empty() {
+        transition_mission_outcome(
+            MissionOutcome::Defeat,
+            &mut outcome,
+            &mut clock,
+            &mut mission_ended,
+        );
+        return;
+    }
+
     let counts = side_counts(&units, control.side);
     let next = next_outcome(&objectives, counts);
+    transition_mission_outcome(next, &mut outcome, &mut clock, &mut mission_ended);
+}
 
-    if next == MissionOutcome::InProgress {
-        return;
+pub(crate) fn transition_mission_outcome(
+    next: MissionOutcome,
+    outcome: &mut MissionOutcome,
+    clock: &mut SimulationClock,
+    mission_ended: &mut MessageWriter<MissionEnded>,
+) -> bool {
+    if next == MissionOutcome::InProgress || outcome.is_finished() {
+        return false;
     }
 
     *outcome = next;
     clock.paused = true;
     mission_ended.write(MissionEnded { outcome: next });
     info!("Mission ended: {next:?}");
+    true
 }
 
 fn side_counts(
@@ -176,6 +199,8 @@ fn condition_met(condition: MissionCondition, counts: SideCounts) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::actors::units::{Rank, Role};
+    use bevy::ecs::system::RunSystemOnce;
 
     fn objectives(
         victory_conditions: Vec<MissionCondition>,
@@ -267,6 +292,41 @@ mod tests {
             next_outcome(&objectives, counts),
             MissionOutcome::InProgress
         );
+    }
+
+    #[test]
+    fn player_unit_death_beats_simultaneous_hostile_elimination_and_emits_once() {
+        let mut world = World::new();
+        world.insert_resource(objectives(
+            vec![MissionCondition::AllHostilesEliminated],
+            vec![],
+        ));
+        world.insert_resource(MissionOutcome::InProgress);
+        world.insert_resource(SimulationClock::default());
+        world.insert_resource(PlayerControl::default());
+        world.init_resource::<Messages<MissionEnded>>();
+        world.spawn((
+            Soldier {
+                rank: Rank::Sergeant,
+                role: Role::Rifleman,
+            },
+            Allegiance { side: Side::Blue },
+            PlayerControlledUnit,
+        ));
+        world.spawn((
+            Soldier {
+                rank: Rank::Private,
+                role: Role::Rifleman,
+            },
+            Allegiance { side: Side::Red },
+        ));
+
+        world.run_system_once(evaluate_mission_outcome).unwrap();
+        world.run_system_once(evaluate_mission_outcome).unwrap();
+
+        assert_eq!(*world.resource::<MissionOutcome>(), MissionOutcome::Defeat);
+        assert!(world.resource::<SimulationClock>().paused);
+        assert_eq!(world.resource::<Messages<MissionEnded>>().len(), 1);
     }
 
     #[test]

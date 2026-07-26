@@ -25,7 +25,7 @@ pub struct SquadDefinition {
 ///
 /// `members` keeps its authored order when leadership changes. Promotion
 /// changes `current_leader`, never the roster itself.
-#[allow(dead_code)] // Identity/revision are consumed by the succession slice.
+#[allow(dead_code)] // Identity/label are authored metadata for UI and diagnostics.
 #[derive(Component, Debug, Clone)]
 pub struct Squad {
     pub id: SquadId,
@@ -36,7 +36,6 @@ pub struct Squad {
     pub revision: u64,
 }
 
-#[allow(dead_code)] // Successor lookup is consumed by the next command-succession slice.
 impl Squad {
     pub fn roster_index(&self, unit: Entity) -> Option<usize> {
         self.members.iter().position(|member| *member == unit)

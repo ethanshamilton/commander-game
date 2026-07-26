@@ -8,10 +8,11 @@ Player-facing awareness of that outcome can become a separate intel/UI problem l
 
 Current semantics:
 
+- death of `PlayerControlledUnit` always ends the mission in defeat and is checked before authored conditions
 - defeat conditions are evaluated before victory conditions
 - any satisfied defeat condition ends the mission in defeat
 - all victory conditions must be satisfied to end the mission in victory
-- simultaneous victory and defeat resolves to defeat
+- simultaneous victory and defeat resolves to defeat, including simultaneous player-command and final-hostile death
 - mission end pauses the simulation clock
 
 Conditions are mission data, while `MissionOutcome` is runtime state.

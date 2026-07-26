@@ -207,14 +207,14 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 
 ## Implementation sequence
 
-### C1 — Lifecycle event and idempotent death
+### DONE C1 — Lifecycle event and idempotent death
 
 - Add `UnitDied { entity, tick, cause }`.
 - Make combat and debug kill use one transition API.
 - Return early if already dead/not alive.
 - Add lifecycle tests proving one event and capability stripping.
 
-### C2 — Minimal squad organization
+### DONE C2 — Minimal squad organization
 
 - Add ordered `SquadDefinition`s to mission authoring.
 - Spawn persistent `Squad` entities and install `MemberOfSquad` reverse links.
@@ -223,7 +223,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 - Make formation decomposition preserve authored roster order.
 - Implement and unit-test ordered successor selection.
 
-### C3 — Atomic forest succession
+### DONE C3 — Atomic forest succession
 
 - Implement `CommandForest::succeed` and invariant validation.
 - Cover root, middle node, leaf, no successor, malformed successor, and cycle safety.

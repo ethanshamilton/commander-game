@@ -1,6 +1,7 @@
 #![doc = include_str!("../../docs/gameplay/command.md")]
 
 use crate::actors::units::Side;
+use crate::gameplay::command_succession::register_command_succession;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -9,6 +10,7 @@ pub struct CommandPlugin;
 impl Plugin for CommandPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CommandForest>();
+        register_command_succession(app);
     }
 }
 
