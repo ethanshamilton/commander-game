@@ -317,6 +317,7 @@ fn apply_plan_assignments(
     mut commands: Commands,
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut units: Query<
         (Entity, &mut Inbox, Option<&AssignedCommandPlan>),
         (With<Soldier>, With<Alive>),
@@ -339,13 +340,15 @@ fn apply_plan_assignments(
             let PacketPayload::CommandPlanAssignment(message) = entry.packet.payload else {
                 unreachable!("payload was checked above");
             };
-            let valid = command_forest.can_command(entry.packet.origin, entity)
-                && message.plan.validate().is_ok()
-                && message
-                    .plan
-                    .expires_at
-                    .is_none_or(|expiry| expiry > clock.tick)
-                && newest_issued_tick.is_none_or(|current| message.issued_tick > current);
+            let valid =
+                command_forest.can_issue_command(entry.packet.origin, entity, |candidate| {
+                    living_soldiers.get(candidate).is_ok()
+                }) && message.plan.validate().is_ok()
+                    && message
+                        .plan
+                        .expires_at
+                        .is_none_or(|expiry| expiry > clock.tick)
+                    && newest_issued_tick.is_none_or(|current| message.issued_tick > current);
             if !valid {
                 continue;
             }
@@ -368,6 +371,7 @@ fn apply_task_assignments(
     mut commands: Commands,
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut units: Query<(Entity, &mut Inbox, Option<&AssignedTask>), (With<Soldier>, With<Alive>)>,
 ) {
     for (entity, mut inbox, current) in &mut units {
@@ -385,13 +389,15 @@ fn apply_task_assignments(
             let PacketPayload::TaskAssignment(message) = entry.packet.payload else {
                 unreachable!("payload was checked above");
             };
-            let valid = command_forest.can_command(entry.packet.origin, entity)
-                && message.directive.validate().is_ok()
-                && message
-                    .directive
-                    .expires_at()
-                    .is_none_or(|expires_at| expires_at > clock.tick)
-                && should_install_task_assignment(newest_issued_tick, &message);
+            let valid =
+                command_forest.can_issue_command(entry.packet.origin, entity, |candidate| {
+                    living_soldiers.get(candidate).is_ok()
+                }) && message.directive.validate().is_ok()
+                    && message
+                        .directive
+                        .expires_at()
+                        .is_none_or(|expires_at| expires_at > clock.tick)
+                    && should_install_task_assignment(newest_issued_tick, &message);
             if !valid {
                 continue;
             }
@@ -418,6 +424,7 @@ fn apply_order_commands(
     mut commands: Commands,
     command_forest: Res<CommandForest>,
     player_controlled: Query<(), With<PlayerControlledUnit>>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut units: Query<(Entity, &mut Inbox), (With<Soldier>, With<Alive>)>,
 ) {
     for (entity, mut inbox) in &mut units {
@@ -433,7 +440,9 @@ fn apply_order_commands(
             }
 
             if player_controlled.get(entry.packet.origin).is_err()
-                || !command_forest.can_command(entry.packet.origin, entity)
+                || !command_forest.can_issue_command(entry.packet.origin, entity, |candidate| {
+                    living_soldiers.get(candidate).is_ok()
+                })
             {
                 continue;
             }
@@ -1212,6 +1221,47 @@ mod tests {
         assert_eq!(assigned.assigned_by, leader);
         assert!(world.get::<MovementOrder>(subordinate).is_none());
         assert!(world.get::<CombatOrder>(subordinate).is_none());
+        assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
+    }
+
+    #[test]
+    fn task_packet_from_dead_origin_is_consumed_and_ignored() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock {
+            tick: 10,
+            ..default()
+        });
+        let dead_leader = spawn_packet_soldier(&mut world, false);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        insert_command_forest(&mut world, dead_leader, subordinate);
+        let directive = TaskDirective::HoldStation {
+            plan_id: CommandPlanId(2),
+            station: PositionTarget::new(Vec2::X, None),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
+            expires_at: None,
+        };
+        world
+            .get_mut::<Inbox>(subordinate)
+            .unwrap()
+            .packets
+            .push(InboxEntry {
+                packet: InfoPacket {
+                    id: PacketId(9),
+                    origin: dead_leader,
+                    address: Address::Direct(subordinate),
+                    created_tick: 9,
+                    payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                        directive,
+                        issued_tick: 9,
+                    }),
+                },
+                fresh: false,
+            });
+
+        world.run_system_once(apply_task_assignments).unwrap();
+        world.flush();
+
+        assert!(world.get::<AssignedTask>(subordinate).is_none());
         assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
     }
 

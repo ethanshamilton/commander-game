@@ -1,7 +1,7 @@
 #![doc = include_str!("../../docs/player/selection.md")]
 
 use crate::GameState;
-use crate::actors::units::Alive;
+use crate::actors::units::{Alive, Soldier};
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::command_plans::CommandPlanAssignmentRequested;
@@ -125,6 +125,7 @@ fn issue_contextual_order(
     command_forest: Res<CommandForest>,
     mut packet_ids: ResMut<PacketIdAllocator>,
     controlled: Query<Entity, (With<PlayerControlledUnit>, With<Alive>)>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
     mut packet_outboxes: Query<
         (&mut Outbox, &mut SeenPackets),
         (With<PlayerControlledUnit>, With<Alive>),
@@ -150,7 +151,9 @@ fn issue_contextual_order(
         return;
     };
 
-    if !command_forest.can_command(controlled_entity, entity) {
+    if !command_forest.can_issue_command(controlled_entity, entity, |candidate| {
+        living_soldiers.get(candidate).is_ok()
+    }) {
         return;
     }
 

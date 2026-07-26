@@ -381,9 +381,9 @@ fn apply_plan_assignment_requests(
             continue;
         };
         if !plan_is_assignable(plan, clock.tick)
-            || soldiers.get(request.issuer).is_err()
-            || soldiers.get(request.assignee).is_err()
-            || !command_forest.can_command(request.issuer, request.assignee)
+            || !command_forest.can_issue_command(request.issuer, request.assignee, |entity| {
+                soldiers.get(entity).is_ok()
+            })
         {
             warn!(
                 ?request,
@@ -461,9 +461,9 @@ fn transmit_pending_task_assignments(
                     issued_tick: clock.tick,
                     received_tick: clock.tick,
                 });
-            } else if living_soldiers.get(pending.assignee).is_ok()
-                && command_forest.can_command(leader, pending.assignee)
-            {
+            } else if command_forest.can_issue_command(leader, pending.assignee, |entity| {
+                living_soldiers.get(entity).is_ok()
+            }) {
                 outbox.send(
                     &mut seen,
                     &mut packet_ids,

@@ -35,10 +35,45 @@ pub struct CommandAssignmentDefinition {
 ///
 /// This is intentionally a forest rather than a single tree: each side may have
 /// separate roots, and restructuring/elimination can temporarily orphan subtrees.
-#[derive(Resource, Debug, Default)]
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
 pub struct CommandForest {
     superior_of: HashMap<Entity, Entity>,
     subordinates_of: HashMap<Entity, Vec<Entity>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuccessionOutcome {
+    pub deceased: Entity,
+    pub old_superior: Option<Entity>,
+    pub successor: Option<Entity>,
+    pub transferred_subordinates: Vec<Entity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandMutationError {
+    UnknownUnit(Entity),
+    InvalidSuccessor { deceased: Entity, successor: Entity },
+    InvalidForest(CommandForestInvariantError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandForestInvariantError {
+    MissingNode(Entity),
+    MissingSubordinateEntry {
+        parent: Entity,
+        child: Entity,
+    },
+    IncorrectSuperior {
+        parent: Entity,
+        child: Entity,
+        recorded: Option<Entity>,
+    },
+    DuplicateSubordinate {
+        parent: Entity,
+        child: Entity,
+    },
+    SelfCommand(Entity),
+    Cycle(Entity),
 }
 
 #[allow(dead_code)]
@@ -149,12 +184,20 @@ impl CommandForest {
         false
     }
 
-    /// Authority check for issuing orders through the command forest.
-    ///
-    /// Self-command is allowed so the player-controlled commander can receive a
-    /// direct order. For subordinate units, the issuer must be an ancestor.
-    pub fn can_command(&self, issuer: Entity, recipient: Entity) -> bool {
+    /// Topology-only authority check. This intentionally ignores life state.
+    pub fn can_command_in_forest(&self, issuer: Entity, recipient: Entity) -> bool {
         issuer == recipient || self.is_superior_of(issuer, recipient)
+    }
+
+    /// Authority check for executable orders and assignments. Both endpoints
+    /// must be living in addition to having a valid forest relationship.
+    pub fn can_issue_command(
+        &self,
+        issuer: Entity,
+        recipient: Entity,
+        mut is_living: impl FnMut(Entity) -> bool,
+    ) -> bool {
+        is_living(issuer) && is_living(recipient) && self.can_command_in_forest(issuer, recipient)
     }
 
     pub fn set_superior(
@@ -208,6 +251,150 @@ impl CommandForest {
                 self.ensure_node(child);
             }
         }
+    }
+
+    /// Atomically remove `deceased`, optionally promoting one of its direct
+    /// children and transferring the other direct children beneath it.
+    pub fn succeed(
+        &mut self,
+        deceased: Entity,
+        successor: Option<Entity>,
+    ) -> Result<SuccessionOutcome, CommandMutationError> {
+        self.validate()
+            .map_err(CommandMutationError::InvalidForest)?;
+        if !self.subordinates_of.contains_key(&deceased) {
+            return Err(CommandMutationError::UnknownUnit(deceased));
+        }
+        if let Some(successor) = successor
+            && self.superior_of(successor) != Some(deceased)
+        {
+            return Err(CommandMutationError::InvalidSuccessor {
+                deceased,
+                successor,
+            });
+        }
+
+        let old_superior = self.superior_of(deceased);
+        let direct_children = self.subordinates_of(deceased).to_vec();
+        let transferred_subordinates = successor.map_or_else(Vec::new, |successor| {
+            direct_children
+                .iter()
+                .copied()
+                .filter(|child| *child != successor)
+                .collect::<Vec<_>>()
+        });
+        let mut prospective = self.clone();
+
+        prospective.superior_of.remove(&deceased);
+        prospective.subordinates_of.remove(&deceased);
+
+        if let Some(parent) = old_superior {
+            let children = prospective
+                .subordinates_of
+                .get_mut(&parent)
+                .expect("validated parent must exist");
+            if let Some(index) = children.iter().position(|child| *child == deceased) {
+                if let Some(successor) = successor {
+                    children[index] = successor;
+                } else {
+                    children.remove(index);
+                }
+            }
+        }
+
+        match successor {
+            Some(successor) => {
+                if let Some(parent) = old_superior {
+                    prospective.superior_of.insert(successor, parent);
+                } else {
+                    prospective.superior_of.remove(&successor);
+                }
+
+                let successor_children = prospective
+                    .subordinates_of
+                    .get_mut(&successor)
+                    .expect("validated successor must exist");
+                for child in &transferred_subordinates {
+                    prospective.superior_of.insert(*child, successor);
+                    if !successor_children.contains(child) {
+                        successor_children.push(*child);
+                    }
+                }
+            }
+            None => {
+                for child in &direct_children {
+                    prospective.superior_of.remove(child);
+                }
+            }
+        }
+
+        prospective
+            .validate()
+            .map_err(CommandMutationError::InvalidForest)?;
+        *self = prospective;
+
+        Ok(SuccessionOutcome {
+            deceased,
+            old_superior,
+            successor,
+            transferred_subordinates,
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), CommandForestInvariantError> {
+        for (&child, &parent) in &self.superior_of {
+            if child == parent {
+                return Err(CommandForestInvariantError::SelfCommand(child));
+            }
+            if !self.subordinates_of.contains_key(&child) {
+                return Err(CommandForestInvariantError::MissingNode(child));
+            }
+            let Some(children) = self.subordinates_of.get(&parent) else {
+                return Err(CommandForestInvariantError::MissingNode(parent));
+            };
+            if !children.contains(&child) {
+                return Err(CommandForestInvariantError::MissingSubordinateEntry { parent, child });
+            }
+        }
+
+        for (&parent, children) in &self.subordinates_of {
+            let mut seen = HashSet::new();
+            for &child in children {
+                if parent == child {
+                    return Err(CommandForestInvariantError::SelfCommand(child));
+                }
+                if !self.subordinates_of.contains_key(&child) {
+                    return Err(CommandForestInvariantError::MissingNode(child));
+                }
+                if !seen.insert(child) {
+                    return Err(CommandForestInvariantError::DuplicateSubordinate {
+                        parent,
+                        child,
+                    });
+                }
+                let recorded = self.superior_of(child);
+                if recorded != Some(parent) {
+                    return Err(CommandForestInvariantError::IncorrectSuperior {
+                        parent,
+                        child,
+                        recorded,
+                    });
+                }
+            }
+        }
+
+        for &start in self.subordinates_of.keys() {
+            let mut current = start;
+            let mut visited = HashSet::new();
+            while let Some(parent) = self.superior_of(current) {
+                if !visited.insert(current) {
+                    return Err(CommandForestInvariantError::Cycle(current));
+                }
+                current = parent;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -303,7 +490,7 @@ mod tests {
     }
 
     #[test]
-    fn can_command_allows_self_and_ancestors_only() {
+    fn topology_authority_allows_self_and_ancestors_only() {
         let (_world, e) = spawn_entities(4);
         let (root, mid, leaf, sibling) = (e[0], e[1], e[2], e[3]);
         let mut forest = CommandForest::default();
@@ -312,14 +499,200 @@ mod tests {
         forest.set_superior(leaf, Some(mid)).unwrap();
         forest.set_superior(sibling, Some(root)).unwrap();
 
-        assert!(forest.can_command(leaf, leaf), "self-command allowed");
-        assert!(forest.can_command(mid, leaf), "direct superior");
-        assert!(forest.can_command(root, leaf), "transitive superior");
-        assert!(!forest.can_command(leaf, mid), "authority is not upward");
         assert!(
-            !forest.can_command(sibling, leaf),
+            forest.can_command_in_forest(leaf, leaf),
+            "self-command allowed"
+        );
+        assert!(forest.can_command_in_forest(mid, leaf), "direct superior");
+        assert!(
+            forest.can_command_in_forest(root, leaf),
+            "transitive superior"
+        );
+        assert!(
+            !forest.can_command_in_forest(leaf, mid),
+            "authority is not upward"
+        );
+        assert!(
+            !forest.can_command_in_forest(sibling, leaf),
             "authority is not lateral"
         );
+    }
+
+    #[test]
+    fn succession_rewrites_middle_node_and_preserves_order_and_subtrees() {
+        let (_world, e) = spawn_entities(8);
+        let (parent, before, deceased, after, successor, child_a, child_b, deep) =
+            (e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7]);
+        let mut forest = CommandForest::default();
+        forest.set_superior(before, Some(parent)).unwrap();
+        forest.set_superior(deceased, Some(parent)).unwrap();
+        forest.set_superior(after, Some(parent)).unwrap();
+        forest.set_superior(successor, Some(deceased)).unwrap();
+        forest.set_superior(child_a, Some(deceased)).unwrap();
+        forest.set_superior(child_b, Some(deceased)).unwrap();
+        forest.set_superior(deep, Some(successor)).unwrap();
+
+        let outcome = forest.succeed(deceased, Some(successor)).unwrap();
+
+        assert_eq!(
+            outcome,
+            SuccessionOutcome {
+                deceased,
+                old_superior: Some(parent),
+                successor: Some(successor),
+                transferred_subordinates: vec![child_a, child_b],
+            }
+        );
+        assert_eq!(forest.subordinates_of(parent), &[before, successor, after]);
+        assert_eq!(forest.subordinates_of(successor), &[deep, child_a, child_b]);
+        assert_eq!(forest.superior_of(successor), Some(parent));
+        assert_eq!(forest.superior_of(child_a), Some(successor));
+        assert!(!forest.subordinates_of.contains_key(&deceased));
+        assert!(!forest.superior_of.contains_key(&deceased));
+        assert_eq!(forest.validate(), Ok(()));
+    }
+
+    #[test]
+    fn root_succession_promotes_a_new_root() {
+        let (_world, e) = spawn_entities(3);
+        let (deceased, successor, sibling) = (e[0], e[1], e[2]);
+        let mut forest = CommandForest::default();
+        forest.set_superior(successor, Some(deceased)).unwrap();
+        forest.set_superior(sibling, Some(deceased)).unwrap();
+
+        forest.succeed(deceased, Some(successor)).unwrap();
+
+        assert_eq!(forest.superior_of(successor), None);
+        assert_eq!(forest.superior_of(sibling), Some(successor));
+        assert_eq!(forest.subordinates_of(successor), &[sibling]);
+        assert!(forest.roots().contains(&successor));
+        assert_eq!(forest.validate(), Ok(()));
+    }
+
+    #[test]
+    fn succession_without_candidate_orphans_children_and_removes_leaf() {
+        let (_world, e) = spawn_entities(4);
+        let (parent, deceased, child_a, child_b) = (e[0], e[1], e[2], e[3]);
+        let mut forest = CommandForest::default();
+        forest.set_superior(deceased, Some(parent)).unwrap();
+        forest.set_superior(child_a, Some(deceased)).unwrap();
+        forest.set_superior(child_b, Some(deceased)).unwrap();
+
+        let outcome = forest.succeed(deceased, None).unwrap();
+
+        assert!(outcome.transferred_subordinates.is_empty());
+        assert_eq!(forest.superior_of(child_a), None);
+        assert_eq!(forest.superior_of(child_b), None);
+        assert!(!forest.subordinates_of(parent).contains(&deceased));
+        assert_eq!(forest.validate(), Ok(()));
+
+        forest.succeed(child_a, None).unwrap();
+        assert!(!forest.subordinates_of.contains_key(&child_a));
+        assert_eq!(forest.validate(), Ok(()));
+    }
+
+    #[test]
+    fn invalid_successor_and_unknown_unit_leave_forest_unchanged() {
+        let (_world, e) = spawn_entities(4);
+        let (deceased, child, unrelated, unknown) = (e[0], e[1], e[2], e[3]);
+        let mut forest = CommandForest::default();
+        forest.set_superior(child, Some(deceased)).unwrap();
+        forest.ensure_node(unrelated);
+        let original = forest.clone();
+
+        assert_eq!(
+            forest.succeed(deceased, Some(unrelated)),
+            Err(CommandMutationError::InvalidSuccessor {
+                deceased,
+                successor: unrelated,
+            })
+        );
+        assert_eq!(forest, original);
+        assert_eq!(
+            forest.succeed(unknown, None),
+            Err(CommandMutationError::UnknownUnit(unknown))
+        );
+        assert_eq!(forest, original);
+    }
+
+    #[test]
+    fn validation_detects_cycles_and_denormalized_map_disagreement() {
+        let (_world, e) = spawn_entities(3);
+        let (a, b, c) = (e[0], e[1], e[2]);
+        let cyclic = CommandForest {
+            superior_of: [(a, b), (b, a)].into(),
+            subordinates_of: [(a, vec![b]), (b, vec![a])].into(),
+        };
+        assert!(matches!(
+            cyclic.validate(),
+            Err(CommandForestInvariantError::Cycle(_))
+        ));
+
+        let incoherent = CommandForest {
+            superior_of: [(c, a)].into(),
+            subordinates_of: [(a, Vec::new()), (c, Vec::new())].into(),
+        };
+        assert_eq!(
+            incoherent.validate(),
+            Err(CommandForestInvariantError::MissingSubordinateEntry {
+                parent: a,
+                child: c,
+            })
+        );
+
+        let duplicate = CommandForest {
+            superior_of: [(c, a)].into(),
+            subordinates_of: [(a, vec![c, c]), (c, Vec::new())].into(),
+        };
+        assert_eq!(
+            duplicate.validate(),
+            Err(CommandForestInvariantError::DuplicateSubordinate {
+                parent: a,
+                child: c,
+            })
+        );
+
+        let missing_node = CommandForest {
+            superior_of: [(c, a)].into(),
+            subordinates_of: [(a, vec![c])].into(),
+        };
+        assert_eq!(
+            missing_node.validate(),
+            Err(CommandForestInvariantError::MissingNode(c))
+        );
+    }
+
+    #[test]
+    fn failed_succession_on_invalid_forest_is_atomic() {
+        let (_world, e) = spawn_entities(2);
+        let (deceased, child) = (e[0], e[1]);
+        let mut forest = CommandForest {
+            superior_of: [(child, deceased)].into(),
+            subordinates_of: [(deceased, Vec::new()), (child, Vec::new())].into(),
+        };
+        let original = forest.clone();
+
+        assert!(matches!(
+            forest.succeed(deceased, Some(child)),
+            Err(CommandMutationError::InvalidForest(_))
+        ));
+        assert_eq!(forest, original);
+    }
+
+    #[test]
+    fn executable_authority_requires_both_endpoints_to_be_living() {
+        let (_world, e) = spawn_entities(3);
+        let (leader, subordinate, unrelated) = (e[0], e[1], e[2]);
+        let mut forest = CommandForest::default();
+        forest.set_superior(subordinate, Some(leader)).unwrap();
+        forest.ensure_node(unrelated);
+
+        assert!(forest.can_issue_command(leader, subordinate, |_| true));
+        assert!(forest.can_issue_command(leader, leader, |_| true));
+        assert!(!forest.can_issue_command(leader, unrelated, |_| true));
+        assert!(!forest.can_issue_command(leader, subordinate, |unit| unit != leader));
+        assert!(!forest.can_issue_command(leader, subordinate, |unit| unit != subordinate));
+        assert!(forest.can_command_in_forest(leader, subordinate));
     }
 
     #[test]
