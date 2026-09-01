@@ -12,6 +12,10 @@ Because the simulation sets are chained (strictly sequential), tiny boundary sys
 
 The mission screen shows the tick meter in the top-right diagnostics box; clicking that box toggles the per-phase breakdown, sorted most expensive first.
 
+## Command succession
+
+`CommandSuccessionDiagnostics` counts succession attempts, successful assumptions, orphaned commands, redelegation resets, cancellation packets issued/applied, and stale or dead-origin command packets rejected. These mission-scoped counters reset when entering a mission and are observational only.
+
 ## Frame timing
 
 Bevy's frame-time diagnostic supplies a smoothed FPS measurement. The mission screen's `RENDER` meter shows current FPS as a percentage of a 60 FPS target. This reflects whole-frame pacing and is not a GPU-only measurement.

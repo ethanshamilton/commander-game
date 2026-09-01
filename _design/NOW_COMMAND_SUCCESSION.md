@@ -93,14 +93,9 @@ Existing subordinate `AssignedTask`s remain valid until superseded, cancelled, o
 
 ### Player command node
 
-If `D` has `PlayerControlledUnit`, move that component to `S`. This keeps the player an in-world command node and preserves the `single()` invariant used by selection/order systems.
+`PlayerControlledUnit` never transfers. Its death always resolves the mission as Defeat, including simultaneous elimination of the final hostile. Selection of the dead controlled unit is cleared, while dead-unit knowledge/history remains intact.
 
-Also:
-
-- change `SelectedUnit` from `D` to `S` if the dead controlled unit was selected;
-- keep dead-unit knowledge/history intact;
-- show a HUD notification naming the successor;
-- if no successor exists, clear `PlayerControlledUnit`, disable command actions, and define mission defeat via an explicit objective if desired rather than crashing queries.
+Command succession is exercised through non-player-controlled squad leaders (the multi-squad tutorial fixture), not by transferring the player's embodied command node.
 
 ## CommandForest API changes
 
@@ -148,13 +143,15 @@ Keep invalidation explicit and small. `Squad.revision` increments whenever membe
 
 For the first death/succession slice, the lifecycle system may directly clear affected `CommandPlanDelegationProgress`. Add revision comparison when squad mutation expands beyond death. Do not add a participant-vector signature or several overlapping squad-change events preemptively.
 
-After recomputation:
+After invalidation:
 
-1. clear the set of accepted subordinate assignments;
-2. recompute all stations/routes in roster order;
-3. send revised tasks to every living member whose directive changed;
-4. explicitly cancel obsolete tasks where the recipient is still alive; and
+1. clear all accepted subordinate recipients;
+2. recompute the full plan from the living roster in authored order;
+3. reissue tasks to every living subordinate one at a time through comms;
+4. explicitly cancel obsolete tasks where the recipient is still alive and lawfully reachable; and
 5. update the coordinator's own target.
+
+Do not retain or compare old station geometry. Full deterministic rebuild is preferred over changed-only optimization.
 
 A single `CommandSucceeded` message carries historical old/new leadership data for UI and traces. Current squad truth remains persistent in the `Squad` component; ordinary consumers use that state rather than reconstructing it from events.
 
@@ -172,7 +169,7 @@ A packet from the dead predecessor that was not accepted before restructuring sh
 
 ## Succession processing system
 
-Create `src/gameplay/command_succession.rs` and `CommandSuccessionPlugin`.
+Keep succession implementation in `src/gameplay/command_succession.rs`, registered by the existing `CommandPlugin`; do not add a separate plugin.
 
 Per `UnitDied`:
 
@@ -185,7 +182,7 @@ Per `UnitDied`:
    - install inherited `AssignedCommandPlan` if applicable;
    - reset/generate delegation progress;
    - add `AssumedCommand`;
-   - transfer `PlayerControlledUnit` if needed.
+   - never transfer `PlayerControlledUnit`; its death is handled as Defeat.
 7. Increment the squad revision and emit `CommandSucceeded`.
 8. Add a decision/command trace record to the successor.
 9. Let deferred ECS commands flush before the next simulation tick.
@@ -229,7 +226,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 - Cover root, middle node, leaf, no successor, malformed successor, and cycle safety.
 - Make authority call sites life-aware.
 
-### C4 — Runtime succession
+### DONE C4 — Runtime succession
 
 - Add plugin/system in `SimulationSet::Cleanup`.
 - Transfer player control and selected unit.
@@ -238,24 +235,24 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 
 **Done when:** debug-killing a squad leader promotes the authored successor before the next simulation tick and all surviving squad members have the new direct superior.
 
-### C5 — Plan assumption
+### DONE C5 — Plan assumption
 
 - Transfer active plan intent without copying stale execution progress.
 - Add `AssumedCommand` and trace/UI status.
 - Preserve expiry/fallback data.
 - Ensure a successor with no inherited plan falls back to ordinary infantry behavior.
 
-### C6 — Dynamic redelegation
+### DONE C6 — Dynamic redelegation
 
 - Replace `delegated_to`-only invalidation with squad revision-aware progress.
-- Recompute and resend changed directives after any command-membership change.
+- Clear progress and rebuild/reissue the full plan after any command-membership revision.
 - Add cancellation for obsolete live recipients.
 - Verify concrete orders remain HTN-sourced.
 
-### C7 — Hardening
+### DONE C7 — Hardening
 
 - Simultaneous leader/successor death.
-- Root commander death and player-control transfer.
+- Root player commander death produces Defeat with no control transfer.
 - Dead packet origin, delayed predecessor packet, comms-isolated successor.
 - Successor dies during assumption.
 - Mission exit/reset.
@@ -282,7 +279,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 8. **Plan inheritance:** successor gets same plan/expiry, fresh progress, and no direct concrete order.
 9. **Redelegation:** Hold Line stations are regenerated for survivors and newer task revisions supersede old ones.
 10. **Comms failure:** successor assumes command locally but subordinate directives travel only when the packet network permits.
-11. **Player root death:** exactly one living `PlayerControlledUnit` remains when a successor exists.
+11. **Player root death:** mission resolves as Defeat and `PlayerControlledUnit` does not transfer.
 12. **Mission teardown:** no succession state/messages leak into the next mission.
 
 ## Acceptance criteria
@@ -292,7 +289,7 @@ Do not reveal an unreported enemy succession to the player. Enemy topology can u
 - Successor selection is deterministic across runs.
 - Active plan intent survives coordinator death, while stale delegation progress does not.
 - Affected living units receive revised directives through comms; succession does not directly install movement/combat orders.
-- Player control transfers safely or degrades to a defined no-commander state.
+- Player-command death always resolves as Defeat and control never transfers.
 - Succession is visible in traces/diagnostics without leaking hidden enemy truth.
 - `cargo test`, `cargo clippy --all-targets`, and `cargo fmt --check` pass.
 

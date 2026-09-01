@@ -178,6 +178,9 @@ fn project_plan_belief(
     };
     state.assigned_plan = Some(plan);
     state.has_command_responsibility = true;
+    state.command_squad_revision = squad
+        .filter(|squad| squad.current_leader == Some(entity))
+        .map(|squad| squad.revision);
 
     if plan.kind != CommandPlanKind::HoldLine {
         return;
@@ -204,7 +207,10 @@ fn project_plan_belief(
         };
     let assignments = decompose_hold_line(from_m, to_m, plan.rally_point_m, entity, &subordinates);
     let delegated = progress
-        .filter(|progress| progress.plan == Some(plan.identity()))
+        .filter(|progress| {
+            progress.plan == Some(plan.identity())
+                && progress.squad_revision == state.command_squad_revision
+        })
         .map(|progress| progress.delegated_to.as_slice())
         .unwrap_or(&[]);
 
@@ -376,7 +382,10 @@ fn under_fire_from_contacts(tick: u64, position_m: Vec2, memory: &PerceptionMemo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actors::units::{Item, ItemKind};
+    use crate::actors::units::{Item, ItemKind, Rank, Role, Side};
+    use crate::gameplay::command_plans::{CommandPlanId, CommandPlanSnapshot};
+    use crate::gameplay::squads::SquadId;
+    use bevy::ecs::system::SystemState;
     use bevy::ecs::world::World;
 
     fn inventory_with_ammo(count: u32) -> Inventory {
@@ -781,6 +790,104 @@ mod tests {
             Some(PositionTarget::new(Vec2::new(10.0, 0.0), None))
         );
         assert!(state.at_fallback_target);
+    }
+
+    #[test]
+    fn revision_mismatch_rebuilds_full_roster_from_first_recipient() {
+        let mut world = World::new();
+        let leader = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Sergeant,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let first = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let second = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let squad = Squad {
+            id: SquadId("test"),
+            label: "Test",
+            side: Side::Blue,
+            members: vec![leader, first, second],
+            current_leader: Some(leader),
+            revision: 2,
+        };
+        let assigned = AssignedCommandPlan {
+            plan: CommandPlanSnapshot {
+                id: CommandPlanId(9),
+                label: "Line".into(),
+                kind: CommandPlanKind::HoldLine,
+                area: CommandPlanArea::Line {
+                    from_m: Vec2::ZERO,
+                    to_m: Vec2::X * 10.0,
+                },
+                rally_point_m: Vec2::NEG_Y,
+                expires_at: None,
+                created_tick: 0,
+            },
+            assigned_by: leader,
+            issued_tick: 1,
+            received_tick: 1,
+        };
+        let stale_progress = CommandPlanDelegationProgress {
+            plan: Some((CommandPlanId(9), 1)),
+            squad_revision: Some(1),
+            delegated_to: vec![first, second],
+        };
+        let mut planner_state = PlannerState::default();
+        let forest = CommandForest::default();
+        let mut query_state: SystemState<Query<(), (With<Soldier>, With<Alive>)>> =
+            SystemState::new(&mut world);
+        let living = query_state.get(&world).unwrap();
+
+        project_plan_belief(
+            &mut planner_state,
+            leader,
+            Some(&assigned),
+            Some(&stale_progress),
+            &forest,
+            Some(&squad),
+            &living,
+        );
+
+        assert_eq!(planner_state.command_squad_revision, Some(2));
+        assert!(planner_state.delegated_assignees.is_empty());
+        assert_eq!(planner_state.next_hold_station.unwrap().assignee, first);
+
+        let current_progress = CommandPlanDelegationProgress {
+            plan: Some((CommandPlanId(9), 1)),
+            squad_revision: Some(2),
+            delegated_to: vec![first],
+        };
+        let mut next_state = PlannerState::default();
+        project_plan_belief(
+            &mut next_state,
+            leader,
+            Some(&assigned),
+            Some(&current_progress),
+            &forest,
+            Some(&squad),
+            &living,
+        );
+        assert_eq!(next_state.next_hold_station.unwrap().assignee, second);
     }
 
     #[test]

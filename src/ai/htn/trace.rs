@@ -1,4 +1,5 @@
 use super::planner::Mtr;
+use crate::gameplay::command_plans::CommandPlanId;
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -84,6 +85,15 @@ pub enum TraceEvent {
     },
     Replanned {
         trigger: ReplanTrigger,
+    },
+    CommandAssumed {
+        predecessor: Entity,
+        plan_id: Option<CommandPlanId>,
+        squad_revision: u64,
+    },
+    RedelegationReset {
+        plan_id: CommandPlanId,
+        squad_revision: u64,
     },
     PlanCompleted,
 }

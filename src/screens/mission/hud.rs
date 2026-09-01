@@ -1,5 +1,9 @@
 use super::MissionScreenRoot;
+use crate::gameplay::command::UnitIdentity;
+use crate::gameplay::command_succession::{CommandSucceeded, SuccessionNotice};
 use crate::gameplay::objectives::MissionOutcome;
+use crate::gameplay::simulation::SimulationClock;
+use crate::player::knowledge::{CONTACT_RECENCY_TTL_TICKS, PlayerTacticalKnowledge};
 use crate::ui::active_action::{ActiveActionPanel, ActiveActionText};
 use bevy::prelude::*;
 
@@ -7,11 +11,14 @@ use bevy::prelude::*;
 struct MissionOutcomeBanner;
 #[derive(Component)]
 struct MissionOutcomeText;
+#[derive(Component)]
+struct SuccessionNoticeText;
 
 pub(super) fn register(app: &mut App) {
     app.add_systems(
         Update,
-        update_mission_outcome_banner.run_if(in_state(crate::GameState::MissionScreen)),
+        (update_mission_outcome_banner, update_succession_notice)
+            .run_if(in_state(crate::GameState::MissionScreen)),
     );
 }
 
@@ -44,6 +51,48 @@ fn update_mission_outcome_banner(
     }
 }
 
+fn update_succession_notice(
+    mut successions: MessageReader<CommandSucceeded>,
+    clock: Res<SimulationClock>,
+    knowledge: Res<PlayerTacticalKnowledge>,
+    identities: Query<&UnitIdentity>,
+    mut notice: ResMut<SuccessionNotice>,
+    mut texts: Query<&mut Text, With<SuccessionNoticeText>>,
+) {
+    for succession in successions.read() {
+        let Some(successor) = succession.successor else {
+            continue;
+        };
+        if !knowledge.is_recently_reported(
+            succession.deceased,
+            clock.tick,
+            CONTACT_RECENCY_TTL_TICKS,
+        ) || !knowledge.is_recently_reported(successor, clock.tick, CONTACT_RECENCY_TTL_TICKS)
+        {
+            continue;
+        }
+        let predecessor = identities
+            .get(succession.deceased)
+            .map(|identity| identity.id.0)
+            .unwrap_or("Leader");
+        let successor_name = identities
+            .get(successor)
+            .map(|identity| identity.id.0)
+            .unwrap_or("Successor");
+        notice.text = Some(format!(
+            "{predecessor} killed; {successor_name} assumed command"
+        ));
+        notice.tick = clock.tick;
+    }
+
+    if clock.tick.saturating_sub(notice.tick) > 100 {
+        notice.text = None;
+    }
+    if let Ok(mut text) = texts.single_mut() {
+        text.0 = notice.text.clone().unwrap_or_default();
+    }
+}
+
 pub(super) fn spawn(commands: &mut Commands) {
     commands
         .spawn((
@@ -72,6 +121,25 @@ pub(super) fn spawn(commands: &mut Commands) {
                 TextColor(Color::WHITE),
             ));
         });
+
+    commands.spawn((
+        MissionScreenRoot,
+        SuccessionNoticeText,
+        Text::new(""),
+        TextFont {
+            font_size: FontSize::Px(22.0),
+            ..default()
+        },
+        TextColor(Color::srgb(1.0, 0.9, 0.35)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(18.0),
+            left: Val::Percent(30.0),
+            right: Val::Percent(30.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    ));
 
     commands
         .spawn((
@@ -105,4 +173,42 @@ pub(super) fn spawn(commands: &mut Commands) {
                 TextColor(Color::srgb(1.0, 0.9, 0.15)),
             ));
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gameplay::command::UnitId;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn hidden_succession_does_not_create_player_notice() {
+        let mut world = World::new();
+        world.init_resource::<SimulationClock>();
+        world.init_resource::<PlayerTacticalKnowledge>();
+        world.init_resource::<SuccessionNotice>();
+        world.init_resource::<Messages<CommandSucceeded>>();
+        let deceased = world
+            .spawn(UnitIdentity {
+                id: UnitId("enemy_leader"),
+            })
+            .id();
+        let successor = world
+            .spawn(UnitIdentity {
+                id: UnitId("enemy_successor"),
+            })
+            .id();
+        world.spawn((SuccessionNoticeText, Text::new("")));
+        world.write_message(CommandSucceeded {
+            squad: deceased,
+            deceased,
+            successor: Some(successor),
+            tick: 1,
+            squad_revision: 1,
+        });
+
+        world.run_system_once(update_succession_notice).unwrap();
+
+        assert!(world.resource::<SuccessionNotice>().text.is_none());
+    }
 }

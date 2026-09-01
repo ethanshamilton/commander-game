@@ -182,6 +182,7 @@ fn consume_player_report_packets(
             }
             PacketPayload::OrderCommand(_)
             | PacketPayload::CommandPlanAssignment(_)
+            | PacketPayload::TaskCancellation(_)
             | PacketPayload::TaskAssignment(_) => retained.push(entry),
         }
     }

@@ -227,6 +227,7 @@ fn bind_next_hold_station(state: &PlannerState) -> Option<BoundOperator> {
     Some(BoundOperator::DelegateHoldStation {
         plan_id: plan.id,
         plan_issued_tick: plan.issued_tick,
+        squad_revision: state.command_squad_revision?,
         assignee: assignment.assignee,
         station: assignment.station,
         fallback: assignment.fallback,
@@ -404,6 +405,7 @@ mod tests {
                 rally_point_m: Vec2::NEG_Y,
                 expires_at: None,
             }),
+            command_squad_revision: Some(0),
             next_hold_station: Some(HoldStationAssignment {
                 assignee,
                 station: PositionTarget::new(Vec2::X, Some(0.0)),

@@ -45,11 +45,7 @@ its anchor for the coordinator, and bundles each member's unique fallback
 station into that member's Hold Station directive. Hold and fallback stations
 are `PositionTarget` poses carrying the shared formation heading, so members
 face back toward the original line after arriving.
-`CommandPlanDelegationProgress` records assignments accepted for transmission so
-replanning is idempotent. The HTN emits `PendingTaskAssignment`; a gameplay
-bridge turns it into `PacketPayload::TaskAssignment` without writing concrete
-orders. After delegation, the coordinator moves to and holds its own station.
-Coordinator is a transient command relationship, not a rank-specific domain.
+`CommandPlanDelegationProgress` records plan identity, squad revision, and recipients accepted for transmission so replanning is idempotent. A plan or revision mismatch clears all recipient progress and stale pending work; HTN decomposition then rebuilds and reissues the full living roster without retaining or comparing old station geometry. The HTN emits revision-stamped `PendingTaskAssignment`; a gameplay bridge revalidates it and turns it into `PacketPayload::TaskAssignment` without writing concrete orders. After delegation, the coordinator moves to and holds its own recomputed station. Coordinator is a transient command relationship, not a rank-specific domain.
 
 Recipients validate task authority, geometry, expiry, and `issued_tick` before
 installing `AssignedTask`. Soldier and squad-leader HTN domains share assigned-

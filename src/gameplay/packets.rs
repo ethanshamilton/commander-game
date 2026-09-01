@@ -2,15 +2,17 @@
 #![allow(dead_code)]
 
 use crate::actors::units::{Alive, Side, Soldier};
+use crate::ai::htn::executor::PlanRunner;
 use crate::ai::perception::ContactType;
 use crate::gameplay::combat::CombatOrder;
 use crate::gameplay::command::CommandForest;
 use crate::gameplay::command_plans::{
     AssignedCommandPlan, AssignedTask, CommandPlanAssignmentMessage, TaskAssignmentMessage,
-    should_install_task_assignment,
+    TaskCancellationMessage, should_install_task_assignment,
 };
+use crate::gameplay::command_succession::CommandSuccessionDiagnostics;
 use crate::gameplay::comms::{CommsGraph, update_comms_graph};
-use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource};
+use crate::gameplay::orders::{CombatOrderSource, MovementOrderSource, clear_if_htn};
 use crate::gameplay::simulation::{MovementOrder, SimulationClock, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
 use crate::intel::ReportedLifeStatus;
@@ -32,6 +34,7 @@ impl Plugin for PacketsPlugin {
                 relay_packets,
                 apply_order_commands,
                 apply_plan_assignments,
+                apply_task_cancellations,
                 apply_task_assignments,
             )
                 .chain()
@@ -91,6 +94,7 @@ pub enum PacketPayload {
     StatusReport(StatusClaim),
     OrderCommand(OrderCommand),
     CommandPlanAssignment(CommandPlanAssignmentMessage),
+    TaskCancellation(TaskCancellationMessage),
     TaskAssignment(TaskAssignmentMessage),
 }
 
@@ -365,6 +369,62 @@ fn apply_plan_assignments(
     }
 }
 
+/// Consume task cancellations before revised assignments in the same comms pass.
+fn apply_task_cancellations(
+    mut commands: Commands,
+    command_forest: Res<CommandForest>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    mut diagnostics: Option<ResMut<CommandSuccessionDiagnostics>>,
+    mut units: Query<
+        (
+            Entity,
+            &mut Inbox,
+            Option<&AssignedTask>,
+            Option<&MovementOrderSource>,
+            Option<&CombatOrderSource>,
+        ),
+        (With<Soldier>, With<Alive>),
+    >,
+) {
+    for (entity, mut inbox, current, movement_source, combat_source) in &mut units {
+        let mut retained = Vec::with_capacity(inbox.packets.len());
+        for entry in inbox.packets.drain(..) {
+            let is_cancellation_for_me = matches!(entry.packet.address, Address::Direct(target) if target == entity)
+                && matches!(&entry.packet.payload, PacketPayload::TaskCancellation(_));
+            if !is_cancellation_for_me {
+                retained.push(entry);
+                continue;
+            }
+            let PacketPayload::TaskCancellation(message) = entry.packet.payload else {
+                unreachable!("payload was checked above");
+            };
+            let valid =
+                command_forest.can_issue_command(entry.packet.origin, entity, |candidate| {
+                    living_soldiers.get(candidate).is_ok()
+                }) && current.is_some_and(|task| {
+                    task.directive.plan_id() == message.plan_id
+                        && message.issued_tick > task.issued_tick
+                });
+            if !valid {
+                if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                    diagnostics.stale_packets_rejected += 1;
+                }
+                continue;
+            }
+
+            if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                diagnostics.cancellations_applied += 1;
+            }
+            commands
+                .entity(entity)
+                .remove::<(AssignedTask, PlanRunner)>();
+            clear_if_htn::<MovementOrder>(&mut commands, entity, movement_source);
+            clear_if_htn::<CombatOrder>(&mut commands, entity, combat_source);
+        }
+        inbox.packets = retained;
+    }
+}
+
 /// Consume subordinate task directives addressed to this unit. Like plan
 /// assignments, these become planner inputs and never concrete orders.
 fn apply_task_assignments(
@@ -372,6 +432,7 @@ fn apply_task_assignments(
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
     living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    mut diagnostics: Option<ResMut<CommandSuccessionDiagnostics>>,
     mut units: Query<(Entity, &mut Inbox, Option<&AssignedTask>), (With<Soldier>, With<Alive>)>,
 ) {
     for (entity, mut inbox, current) in &mut units {
@@ -399,6 +460,9 @@ fn apply_task_assignments(
                         .is_none_or(|expires_at| expires_at > clock.tick)
                     && should_install_task_assignment(newest_issued_tick, &message);
             if !valid {
+                if let Some(diagnostics) = diagnostics.as_deref_mut() {
+                    diagnostics.stale_packets_rejected += 1;
+                }
                 continue;
             }
 
@@ -1180,6 +1244,47 @@ mod tests {
     }
 
     #[test]
+    fn isolated_task_sender_does_not_change_recipient_assignment() {
+        let mut world = World::new();
+        world.init_resource::<CommsGraph>();
+        world.insert_resource(SimulationClock {
+            tick: 10,
+            ..default()
+        });
+        let leader = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        insert_command_forest(&mut world, leader, subordinate);
+        let directive = TaskDirective::HoldStation {
+            plan_id: CommandPlanId(2),
+            station: PositionTarget::new(Vec2::X, None),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
+            expires_at: None,
+        };
+        world
+            .get_mut::<Outbox>(leader)
+            .unwrap()
+            .packets
+            .push(InfoPacket {
+                id: PacketId(22),
+                origin: leader,
+                address: Address::Direct(subordinate),
+                created_tick: 10,
+                payload: PacketPayload::TaskAssignment(TaskAssignmentMessage {
+                    directive,
+                    issued_tick: 10,
+                }),
+            });
+
+        world.run_system_once(update_comms_graph).unwrap();
+        world.run_system_once(deliver_packets).unwrap();
+        world.run_system_once(relay_packets).unwrap();
+        world.run_system_once(apply_task_assignments).unwrap();
+        world.flush();
+
+        assert!(world.get::<AssignedTask>(subordinate).is_none());
+    }
+
+    #[test]
     fn valid_task_packet_installs_planner_input_without_concrete_orders() {
         let mut world = World::new();
         world.insert_resource(SimulationClock {
@@ -1227,6 +1332,7 @@ mod tests {
     #[test]
     fn task_packet_from_dead_origin_is_consumed_and_ignored() {
         let mut world = World::new();
+        world.init_resource::<CommandSuccessionDiagnostics>();
         world.insert_resource(SimulationClock {
             tick: 10,
             ..default()
@@ -1263,6 +1369,78 @@ mod tests {
 
         assert!(world.get::<AssignedTask>(subordinate).is_none());
         assert!(world.get::<Inbox>(subordinate).unwrap().packets.is_empty());
+        assert_eq!(
+            world
+                .resource::<CommandSuccessionDiagnostics>()
+                .stale_packets_rejected,
+            1
+        );
+    }
+
+    #[test]
+    fn cancellation_requires_newer_stamp_and_clears_only_htn_execution() {
+        let mut world = World::new();
+        world.init_resource::<CommandSuccessionDiagnostics>();
+        let leader = spawn_packet_soldier(&mut world, true);
+        let subordinate = spawn_packet_soldier(&mut world, true);
+        insert_command_forest(&mut world, leader, subordinate);
+        let directive = TaskDirective::HoldStation {
+            plan_id: CommandPlanId(3),
+            station: PositionTarget::new(Vec2::X, None),
+            fallback: PositionTarget::new(Vec2::ZERO, None),
+            expires_at: None,
+        };
+        world.entity_mut(subordinate).insert((
+            AssignedTask {
+                directive,
+                assigned_by: leader,
+                issued_tick: 12,
+                received_tick: 12,
+            },
+            MovementOrder::Hold,
+            MovementOrderSource::htn(),
+            CombatOrder::HoldFire,
+            CombatOrderSource::player(),
+        ));
+        for (id, issued_tick) in [(1, 11), (2, 13)] {
+            world
+                .get_mut::<Inbox>(subordinate)
+                .unwrap()
+                .packets
+                .push(InboxEntry {
+                    packet: InfoPacket {
+                        id: PacketId(id),
+                        origin: leader,
+                        address: Address::Direct(subordinate),
+                        created_tick: issued_tick,
+                        payload: PacketPayload::TaskCancellation(TaskCancellationMessage {
+                            plan_id: CommandPlanId(3),
+                            issued_tick,
+                        }),
+                    },
+                    fresh: false,
+                });
+        }
+
+        world.run_system_once(apply_task_cancellations).unwrap();
+        world.flush();
+
+        assert!(world.get::<AssignedTask>(subordinate).is_none());
+        assert!(world.get::<MovementOrder>(subordinate).is_none());
+        assert!(world.get::<MovementOrderSource>(subordinate).is_none());
+        assert!(world.get::<CombatOrder>(subordinate).is_some());
+        assert_eq!(
+            world
+                .resource::<CommandSuccessionDiagnostics>()
+                .stale_packets_rejected,
+            1
+        );
+        assert_eq!(
+            world
+                .resource::<CommandSuccessionDiagnostics>()
+                .cancellations_applied,
+            1
+        );
     }
 
     #[test]

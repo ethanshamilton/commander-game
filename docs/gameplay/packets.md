@@ -35,6 +35,8 @@ forest, then installs the wrapped unit/combat order with player-sourced order
 provenance. Failed authorization still consumes the packet; the network does not
 retry or reinterpret it.
 
+Task assignments and cancellations are also packet-carried intent. Recipients require a living current commander, valid plan identity, and a strictly newer issue tick. Cancellation is processed before revised assignment in a comms pass; accepted cancellation removes `AssignedTask`, abandons its runner, and clears only HTN-sourced concrete orders. Dead-predecessor and stale packets are consumed and rejected.
+
 Inbox entries have a finite lifetime (`INBOX_TTL_TICKS`) and are pruned before
 delivery each comms tick. `SeenPackets` is deliberately not pruned with the
 inbox: if an old utterance still matters, a sender should create a new packet

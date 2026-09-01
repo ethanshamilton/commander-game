@@ -2,10 +2,13 @@
 
 use crate::GameState;
 use crate::actors::units::{Alive, Soldier};
+use crate::ai::htn::trace::{DecisionTrace, TraceEvent};
 use crate::gameplay::command::CommandForest;
+use crate::gameplay::command_succession::CommandSuccessionDiagnostics;
 use crate::gameplay::packets::{Address, Outbox, PacketIdAllocator, PacketPayload, SeenPackets};
 use crate::gameplay::simulation::{SimulationClock, SimulationSet};
 use crate::gameplay::spatial::PositionTarget;
+use crate::gameplay::squads::{MemberOfSquad, Squad};
 use bevy::prelude::*;
 
 /// Tactical plans are persistent intent-bearing plans created during a
@@ -24,7 +27,11 @@ impl Plugin for CommandPlansPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                transmit_pending_task_assignments
+                (
+                    invalidate_delegation_on_revision,
+                    transmit_pending_task_assignments,
+                )
+                    .chain()
                     .in_set(SimulationSet::Thinking)
                     .before(crate::ai::htn::synthesis::synthesize_beliefs)
                     .run_if(in_state(GameState::MissionScreen)),
@@ -318,6 +325,12 @@ pub struct TaskAssignmentMessage {
     pub issued_tick: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskCancellationMessage {
+    pub plan_id: CommandPlanId,
+    pub issued_tick: u64,
+}
+
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct AssignedTask {
     pub directive: TaskDirective,
@@ -338,6 +351,7 @@ pub fn should_install_task_assignment(
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct PendingTaskAssignment {
     pub plan_issued_tick: u64,
+    pub squad_revision: u64,
     pub assignee: Entity,
     pub directive: TaskDirective,
 }
@@ -347,14 +361,16 @@ pub struct PendingTaskAssignment {
 #[derive(Component, Debug, Default, Clone, PartialEq, Eq)]
 pub struct CommandPlanDelegationProgress {
     pub plan: Option<(CommandPlanId, u64)>,
+    pub squad_revision: Option<u64>,
     pub delegated_to: Vec<Entity>,
 }
 
 impl CommandPlanDelegationProgress {
-    pub fn reset_for(&mut self, plan_id: CommandPlanId, issued_tick: u64) {
+    pub fn reset_for(&mut self, plan_id: CommandPlanId, issued_tick: u64, squad_revision: u64) {
         let identity = (plan_id, issued_tick);
-        if self.plan != Some(identity) {
+        if self.plan != Some(identity) || self.squad_revision != Some(squad_revision) {
             self.plan = Some(identity);
+            self.squad_revision = Some(squad_revision);
             self.delegated_to.clear();
         }
     }
@@ -435,12 +451,102 @@ fn apply_plan_assignment_requests(
     }
 }
 
+fn invalidate_delegation_on_revision(
+    mut commands: Commands,
+    clock: Res<SimulationClock>,
+    command_forest: Res<CommandForest>,
+    mut packet_ids: ResMut<PacketIdAllocator>,
+    mut diagnostics: ResMut<CommandSuccessionDiagnostics>,
+    squads: Query<&Squad>,
+    living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    mut coordinators: Query<(
+        Entity,
+        &MemberOfSquad,
+        &AssignedCommandPlan,
+        &mut CommandPlanDelegationProgress,
+        Option<&PendingTaskAssignment>,
+        &mut Outbox,
+        &mut SeenPackets,
+        Option<&mut DecisionTrace>,
+    )>,
+) {
+    for (coordinator, membership, assigned, mut progress, pending, mut outbox, mut seen, trace) in
+        &mut coordinators
+    {
+        let Ok(squad) = squads.get(membership.squad) else {
+            continue;
+        };
+        if squad.current_leader != Some(coordinator) {
+            continue;
+        }
+        let identity = (assigned.plan.id, assigned.issued_tick);
+        if progress.plan == Some(identity) && progress.squad_revision == Some(squad.revision) {
+            continue;
+        }
+
+        let desired: Vec<_> = squad
+            .members
+            .iter()
+            .copied()
+            .filter(|member| *member != coordinator && living_soldiers.get(*member).is_ok())
+            .collect();
+        if let Some((old_plan_id, _)) = progress.plan {
+            for obsolete in progress
+                .delegated_to
+                .iter()
+                .copied()
+                .filter(|recipient| !desired.contains(recipient))
+            {
+                if command_forest.can_issue_command(coordinator, obsolete, |entity| {
+                    living_soldiers.get(entity).is_ok()
+                }) {
+                    outbox.send(
+                        &mut seen,
+                        &mut packet_ids,
+                        coordinator,
+                        Address::Direct(obsolete),
+                        clock.tick,
+                        PacketPayload::TaskCancellation(TaskCancellationMessage {
+                            plan_id: old_plan_id,
+                            issued_tick: clock.tick,
+                        }),
+                    );
+                    diagnostics.cancellations_issued += 1;
+                }
+            }
+        }
+
+        diagnostics.redelegation_resets += 1;
+        if let Some(mut trace) = trace {
+            trace.push(
+                clock.tick,
+                clock.elapsed_s,
+                TraceEvent::RedelegationReset {
+                    plan_id: assigned.plan.id,
+                    squad_revision: squad.revision,
+                },
+            );
+        }
+        progress.plan = Some(identity);
+        progress.squad_revision = Some(squad.revision);
+        progress.delegated_to.clear();
+        if pending.is_some_and(|pending| pending.squad_revision != squad.revision) {
+            commands
+                .entity(coordinator)
+                .remove::<PendingTaskAssignment>();
+        }
+    }
+}
+
 fn transmit_pending_task_assignments(
     mut commands: Commands,
     clock: Res<SimulationClock>,
     command_forest: Res<CommandForest>,
     mut packet_ids: ResMut<PacketIdAllocator>,
     living_soldiers: Query<(), (With<Soldier>, With<Alive>)>,
+    squads: Query<&Squad>,
+    assignments: Query<&AssignedCommandPlan>,
+    memberships: Query<&MemberOfSquad>,
     mut leaders: Query<(
         Entity,
         &PendingTaskAssignment,
@@ -451,7 +557,20 @@ fn transmit_pending_task_assignments(
 ) {
     for (leader, pending, mut progress, mut outbox, mut seen) in &mut leaders {
         let plan_id = pending.directive.plan_id();
-        progress.reset_for(plan_id, pending.plan_issued_tick);
+        let valid_context = assignments.get(leader).is_ok_and(|assigned| {
+            assigned.plan.id == plan_id && assigned.issued_tick == pending.plan_issued_tick
+        }) && memberships
+            .get(leader)
+            .ok()
+            .and_then(|membership| squads.get(membership.squad).ok())
+            .is_some_and(|squad| {
+                squad.current_leader == Some(leader) && squad.revision == pending.squad_revision
+            });
+        if !valid_context {
+            commands.entity(leader).remove::<PendingTaskAssignment>();
+            continue;
+        }
+        progress.reset_for(plan_id, pending.plan_issued_tick, pending.squad_revision);
 
         if !progress.delegated_to.contains(&pending.assignee) {
             if pending.assignee == leader {
@@ -483,9 +602,13 @@ fn transmit_pending_task_assignments(
                 );
             }
 
-            // A dead/removed subordinate is also considered processed so the
-            // leader can continue decomposing the rest of the plan.
-            progress.delegated_to.push(pending.assignee);
+            if pending.assignee == leader
+                || command_forest.can_issue_command(leader, pending.assignee, |entity| {
+                    living_soldiers.get(entity).is_ok()
+                })
+            {
+                progress.delegated_to.push(pending.assignee);
+            }
         }
         commands.entity(leader).remove::<PendingTaskAssignment>();
     }
@@ -793,6 +916,7 @@ mod tests {
                 Alive,
                 PendingTaskAssignment {
                     plan_issued_tick: 3,
+                    squad_revision: 0,
                     assignee: subordinate,
                     directive,
                 },
@@ -801,6 +925,28 @@ mod tests {
                 SeenPackets::default(),
             ))
             .id();
+        let mut plan = hold_line();
+        plan.id = CommandPlanId(7);
+        world.entity_mut(leader).insert(AssignedCommandPlan {
+            plan: plan.snapshot(),
+            assigned_by: leader,
+            issued_tick: 3,
+            received_tick: 3,
+        });
+        let squad = world
+            .spawn(Squad {
+                id: crate::gameplay::squads::SquadId("test"),
+                label: "Test",
+                side: crate::actors::units::Side::Blue,
+                members: vec![leader, subordinate],
+                current_leader: Some(leader),
+                revision: 0,
+            })
+            .id();
+        world.entity_mut(leader).insert(MemberOfSquad {
+            squad,
+            roster_index: 0,
+        });
         let mut forest = CommandForest::default();
         forest.set_superior(subordinate, Some(leader)).unwrap();
         world.insert_resource(forest);
@@ -831,6 +977,110 @@ mod tests {
         assert_eq!(allocator.allocate(), CommandPlanId(1));
         allocator.reset();
         assert_eq!(allocator.allocate(), CommandPlanId(0));
+    }
+
+    #[test]
+    fn squad_revision_mismatch_clears_all_progress_and_cancels_obsolete_recipient() {
+        let mut world = World::new();
+        world.insert_resource(SimulationClock {
+            tick: 20,
+            ..default()
+        });
+        world.init_resource::<PacketIdAllocator>();
+        world.init_resource::<CommandSuccessionDiagnostics>();
+        let leader = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Sergeant,
+                    role: Role::Rifleman,
+                },
+                Alive,
+                Outbox::default(),
+                SeenPackets::default(),
+            ))
+            .id();
+        let current = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let obsolete = world
+            .spawn((
+                Soldier {
+                    rank: Rank::Private,
+                    role: Role::Rifleman,
+                },
+                Alive,
+            ))
+            .id();
+        let squad = world
+            .spawn(Squad {
+                id: crate::gameplay::squads::SquadId("test"),
+                label: "Test",
+                side: crate::actors::units::Side::Blue,
+                members: vec![leader, current],
+                current_leader: Some(leader),
+                revision: 2,
+            })
+            .id();
+        world.entity_mut(leader).insert((
+            MemberOfSquad {
+                squad,
+                roster_index: 0,
+            },
+            AssignedCommandPlan {
+                plan: hold_line().snapshot(),
+                assigned_by: leader,
+                issued_tick: 10,
+                received_tick: 10,
+            },
+            CommandPlanDelegationProgress {
+                plan: Some((CommandPlanId(4), 10)),
+                squad_revision: Some(1),
+                delegated_to: vec![current, obsolete],
+            },
+            PendingTaskAssignment {
+                plan_issued_tick: 10,
+                squad_revision: 1,
+                assignee: current,
+                directive: TaskDirective::HoldStation {
+                    plan_id: CommandPlanId(4),
+                    station: PositionTarget::new(Vec2::X, None),
+                    fallback: PositionTarget::new(Vec2::ZERO, None),
+                    expires_at: None,
+                },
+            },
+        ));
+        let mut forest = CommandForest::default();
+        forest.set_superior(current, Some(leader)).unwrap();
+        forest.set_superior(obsolete, Some(leader)).unwrap();
+        world.insert_resource(forest);
+
+        world
+            .run_system_once(invalidate_delegation_on_revision)
+            .unwrap();
+        world.flush();
+
+        let progress = world.get::<CommandPlanDelegationProgress>(leader).unwrap();
+        assert_eq!(progress.squad_revision, Some(2));
+        assert!(progress.delegated_to.is_empty());
+        assert!(world.get::<PendingTaskAssignment>(leader).is_none());
+        let outbox = world.get::<Outbox>(leader).unwrap();
+        assert_eq!(outbox.packets.len(), 1);
+        assert!(matches!(
+            outbox.packets[0].payload,
+            PacketPayload::TaskCancellation(TaskCancellationMessage {
+                plan_id: CommandPlanId(4),
+                issued_tick: 20,
+            })
+        ));
+        let diagnostics = world.resource::<CommandSuccessionDiagnostics>();
+        assert_eq!(diagnostics.redelegation_resets, 1);
+        assert_eq!(diagnostics.cancellations_issued, 1);
     }
 
     #[test]

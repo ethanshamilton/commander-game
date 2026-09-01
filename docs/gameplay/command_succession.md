@@ -34,6 +34,18 @@ Failed atomic forest mutation logs a warning and does not partially update squad
 
 `PlayerControlledUnit` never transfers. Its death always resolves the mission as Defeat, even when the final hostile dies simultaneously. The ordinary mission outcome transition pauses simulation and emits `MissionEnded` once. A selection pointing to the deceased controlled unit is cleared.
 
-## C5/C6 boundary
+## Plan assumption
 
-C4 changes organizational topology and squad revision only. It intentionally does not transfer or remove `AssignedCommandPlan`, copy delegation progress, alter subordinate tasks, or issue concrete orders. Plan assumption belongs to C5; revision-aware invalidation and dynamic redelegation belong to C6.
+A living successor directly assumes an unexpired `AssignedCommandPlan` as doctrine. The plan snapshot, original assigner, original issue tick, rally point, and expiry are preserved; `AssumedCommand` separately records predecessor and assumption time. The predecessor is replaced in `CommandPlanAssignees`. Delegation progress is never copied.
+
+When a plan is inherited, the promoted unit's old subordinate task and HTN execution are superseded so leadership planning can run. Succession never installs a movement or combat order. Expired or absent plans are not inherited.
+
+## Dynamic redelegation
+
+`CommandPlanDelegationProgress` records plan identity, squad revision, and recipient entities only. A plan/revision mismatch clears all recipient progress and drops pending work from the old revision. Existing HTN Hold Line decomposition then rebuilds the entire plan from the current living roster and emits new subordinate directives one at a time in roster order.
+
+Every directive still travels through Outbox and the packet network. Obsolete living recipients can receive newer task-cancellation packets; cancellation removes planner intent and only HTN-sourced execution. The coordinator's own target is recomputed locally by HTN synthesis. No station geometry is retained or compared during invalidation.
+
+## Observability and reset
+
+Assumption and redelegation appear in decision traces. Diagnostics count attempts, assumptions, orphaning, resets, cancellations, and stale packet rejection. Player-facing notices require recent tactical knowledge of both predecessor and successor. Transient notices, diagnostics, and succession messages reset at mission boundaries.

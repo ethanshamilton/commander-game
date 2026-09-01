@@ -1,6 +1,8 @@
 use super::unit_ai_debug;
 use crate::actors::units::{Allegiance, Health, Inventory, Mobility, Soldier};
 use crate::ai::perception::{PerceptionMemory, VisualSensor};
+use crate::gameplay::command::UnitIdentity;
+use crate::gameplay::command_succession::AssumedCommand;
 use crate::gameplay::simulation::SimulationClock;
 use crate::gameplay::spatial::{BattlefieldPosition, Heading};
 use crate::player::control::PlayerControl;
@@ -38,7 +40,9 @@ fn update_selected_unit_info_panel(
         Option<&Heading>,
         Option<&VisualSensor>,
         Option<&PerceptionMemory>,
+        Option<&AssumedCommand>,
     )>,
+    identities: Query<&UnitIdentity>,
     changed_units: Query<
         (),
         Or<(
@@ -51,6 +55,7 @@ fn update_selected_unit_info_panel(
             Changed<Heading>,
             Changed<VisualSensor>,
             Changed<PerceptionMemory>,
+            Changed<AssumedCommand>,
         )>,
     >,
 ) {
@@ -83,6 +88,7 @@ fn update_selected_unit_info_panel(
         heading,
         visual_sensor,
         memory,
+        assumed_command,
     )) = units.get(entity)
     else {
         set_display_if_changed(&mut panel_node, Display::None);
@@ -125,8 +131,19 @@ fn update_selected_unit_info_panel(
         0
     };
 
+    let assumption_text = if is_current && is_controlled_side {
+        assumed_command.map_or_else(String::new, |assumed| {
+            let predecessor = identities
+                .get(assumed.predecessor)
+                .map(|identity| identity.id.0)
+                .unwrap_or("unknown leader");
+            format!("\n\nStatus: Assumed command from {predecessor}")
+        })
+    } else {
+        String::new()
+    };
     let next = format!(
-        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}",
+        "Side: {:?}\nRank: {:?}\nRole: {:?}\n\nHealth: {}/{}\nSpeed: {}\nAmmo: {}\n\nPosition: ({:.1}m, {:.1}m)\nHeading: {}\n\n{}\nContacts: {}{}",
         allegiance.side,
         soldier.rank,
         soldier.role,
@@ -139,6 +156,7 @@ fn update_selected_unit_info_panel(
         heading_text,
         sensor_text,
         contact_count,
+        assumption_text,
     );
     if let Ok(mut text) = text_query.single_mut()
         && text.0 != next

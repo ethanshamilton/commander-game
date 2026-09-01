@@ -223,6 +223,17 @@ fn format_trace_event(event: &TraceEvent) -> String {
         TraceEvent::Replanned { trigger } => {
             format!("Replanned: {}", format_replan_trigger(*trigger))
         }
+        TraceEvent::CommandAssumed {
+            predecessor,
+            plan_id,
+            squad_revision,
+        } => format!(
+            "CommandAssumed: predecessor={predecessor:?} plan={plan_id:?} squad_revision={squad_revision}"
+        ),
+        TraceEvent::RedelegationReset {
+            plan_id,
+            squad_revision,
+        } => format!("RedelegationReset: plan={plan_id:?} squad_revision={squad_revision}"),
         TraceEvent::PlanCompleted => "PlanCompleted".to_string(),
     }
 }

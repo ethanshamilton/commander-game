@@ -24,6 +24,7 @@ pub enum BoundOperator {
     DelegateHoldStation {
         plan_id: CommandPlanId,
         plan_issued_tick: u64,
+        squad_revision: u64,
         assignee: Entity,
         station: PositionTarget,
         fallback: PositionTarget,
@@ -90,6 +91,7 @@ impl BoundOperator {
             BoundOperator::DelegateHoldStation {
                 plan_id,
                 plan_issued_tick,
+                squad_revision,
                 assignee,
                 station,
                 fallback,
@@ -97,6 +99,7 @@ impl BoundOperator {
             } => {
                 commands.entity(entity).insert(PendingTaskAssignment {
                     plan_issued_tick,
+                    squad_revision,
                     assignee,
                     directive: TaskDirective::HoldStation {
                         plan_id,
@@ -123,10 +126,13 @@ impl BoundOperator {
             BoundOperator::DelegateHoldStation {
                 plan_id,
                 plan_issued_tick,
+                squad_revision,
                 assignee,
                 ..
             } => {
-                if state.has_delegated_to((plan_id, plan_issued_tick), assignee) {
+                if state.command_squad_revision != Some(squad_revision) {
+                    StepPoll::Failed("squad revision changed during delegation")
+                } else if state.has_delegated_to((plan_id, plan_issued_tick), assignee) {
                     StepPoll::Succeeded
                 } else if state
                     .assigned_plan
